@@ -140,8 +140,8 @@ Edit
 Improve AI reasoning for research-based Q&A.
 Enhance bias detection in research synthesis.
 Expand Fetch.ai Agent integrations for more specialized research fields.
-🚀 Thesys is redefining AI-powered research—join us on this journey!
+🚀 Thesys is redefining AI-powered research—join me on this journey!
 
-📌 Maintainers: [Your Name] | [Your Email] | [Your LinkedIn]
+📌 Maintainers: Sahus Gupta | sahusgupta@gmail.com | https://www.linkedin.com/in/sahus-gupta-14495127b/
 
-🔥 Does this README capture everything you need? Let me know if you want refinements! 🚀
+
