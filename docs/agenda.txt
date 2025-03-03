@@ -1,0 +1,133 @@
+Week 1:
+📂 Step 1: Implement AI Summarization & Research Processing
+📁 models/summarization_model.py
+Purpose: AI-driven text summarization of research papers, articles, and documents.
+
+🔹 File Breakdown (What Needs to Be Done)
+1️⃣ Define Summarization Model
+
+Select LLM (GPT-4, Llama 2, BART, Pegasus, or T5).
+Implement abstractive vs. extractive summarization options.
+Support multi-document summarization for research synthesis.
+2️⃣ Preprocess Input Text
+
+Implement document segmentation (breaking large documents into chunks).
+Perform tokenization, stopword removal, lemmatization.
+Convert scanned PDFs into machine-readable text.
+3️⃣ Generate Summary
+
+Use NLP models to create a structured summary with:
+🔹 Key Findings
+🔹 Methodologies
+🔹 Contradictions/Limitations
+Adapt summary depth based on user preference (brief vs. detailed).
+4️⃣ Return Summarized Output
+
+Convert the AI-generated summary into a structured JSON response.
+Store summaries in FAISS/Pinecone for fast retrieval.
+📁 models/document_parser.py
+Purpose: Extract readable text from PDFs, HTML articles, and scanned documents.
+
+🔹 File Breakdown (What Needs to Be Done)
+1️⃣ Extract Text from Various Document Types
+
+Support PDFs, HTML articles, Word docs, and plain text files.
+Use PyMuPDF (PDF parsing) & BeautifulSoup (HTML parsing).
+2️⃣ Implement Optical Character Recognition (OCR)
+
+Convert scanned PDFs & images into searchable text.
+Use Tesseract OCR or EasyOCR to extract data from non-machine-readable sources.
+3️⃣ Clean & Preprocess Extracted Text
+
+Remove boilerplate content (headers, footers, ads, page numbers).
+Perform sentence segmentation to break large texts into readable paragraphs.
+4️⃣ Store Parsed Text in Vector Database
+
+Convert text into vector embeddings (FAISS/Pinecone) for semantic search & retrieval.
+📁 backend/query_pipeline.py
+Purpose: Handles research query execution, routing input to AI models, and structuring the output.
+
+🔹 File Breakdown (What Needs to Be Done)
+1️⃣ Receive User Query & Document Input
+
+Accept input via API (from frontend) or CLI (for local testing).
+Validate input: Ensure proper file format, text length, and research topic.
+2️⃣ Pass Query to AI Summarization Model
+
+Retrieve relevant documents from FAISS/Pinecone.
+Generate summarization request and send to models/summarization_model.py.
+3️⃣ Return Processed Research Output
+
+Format AI summary into a structured JSON response.
+Attach metadata (source details, confidence scores).
+Return AI-generated structured report to API/frontend.
+📂 Step 2: Implement AI Citation Generation
+📁 models/citation_model.py
+Purpose: Automatically generate properly formatted citations (APA, MLA, IEEE, Chicago).
+
+🔹 File Breakdown (What Needs to Be Done)
+1️⃣ Extract Key Citation Data
+
+Retrieve author name, title, publication year, source URL, DOI.
+If missing, query CrossRef API & Google Scholar API to fetch missing metadata.
+2️⃣ Format Citation Based on Style Guide
+
+Convert extracted data into APA, MLA, IEEE, or custom user-defined format.
+Implement BibTeX conversion for academic export.
+3️⃣ Return Formatted Citation
+
+Ensure correct punctuation & capitalization.
+Convert into JSON output for API.
+📁 backend/citation_generator.py
+Purpose: Calls citation_model.py and formats citations based on research papers, books, and online articles.
+
+🔹 File Breakdown (What Needs to Be Done)
+1️⃣ Accept Citation Request
+
+Receives raw citation data or document metadata.
+Validates document type (book, journal, website, conference paper).
+2️⃣ Generate Citation
+
+Calls models/citation_model.py to format proper APA/MLA/IEEE citation.
+3️⃣ Return Properly Structured Citation
+
+Outputs citation in JSON + BibTeX format.
+Allows exporting citations as a reference list.
+📂 Step 3: Implement AI Fact-Checking
+📁 models/factcheck_model.py
+Purpose: Cross-checks AI-generated information against verified sources and flags potential misinformation.
+
+🔹 File Breakdown (What Needs to Be Done)
+1️⃣ Retrieve Fact-Checking Data
+
+Query Semantic Scholar, CrossRef, Wikipedia, FactCheck.org.
+Web scrape news sources, peer-reviewed journals, and Wikipedia pages.
+2️⃣ Score Credibility of Sources
+
+Assign a confidence score based on:
+🔹 Peer-reviewed vs. Blog article
+🔹 Publication recency
+🔹 Reputation of the journal/site
+3️⃣ Detect Bias & Inconsistencies
+
+Run sentiment analysis to detect political or corporate bias.
+Highlight contradictory information across sources.
+4️⃣ Return Verified Research Output
+
+Tag information accuracy as ✅ Verified, ⚠️ Contradictory, or ❌ Misleading.
+Provide recommended alternative sources for conflicting claims.
+📁 backend/factcheck_pipeline.py
+Purpose: Handles fact-checking workflow, ensuring all AI-generated research is cross-verified before being returned to the user.
+
+🔹 File Breakdown (What Needs to Be Done)
+1️⃣ Process User Query
+
+Accepts AI-generated summaries & extracts key claims.
+2️⃣ Run AI Fact-Checking
+
+Calls models/factcheck_model.py to verify research.
+If contradictions detected, generates warning report.
+3️⃣ Return Verified Research Output
+
+Sends fact-checked, source-verified research summary to frontend.
+Marks trust levels with appropriate labels (✅ Verified, ⚠️ Needs Review, ❌ Contradictory).
