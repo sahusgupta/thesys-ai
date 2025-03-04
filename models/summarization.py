@@ -3,6 +3,8 @@ import os
 import nltk
 import re
 from typing import Union, List
+import yake
+
 # Load OpenAI API key
 client = oa.Client()
 # Strip any whitespace or newline characters from the API key
@@ -13,80 +15,6 @@ client.api_key = api_key
 # Download required NLTK resources
 nltk.download('stopwords')
 nltk.download('punkt')
-
-def chunk_text(text: str, chunk_size: int = 1000) -> List[str]:
-    """
-    Break large text into smaller chunks of approximately chunk_size words.
-    Ensures chunks end at sentence boundaries.
-    
-    Args:
-        text: The input text to be chunked
-        chunk_size: Target number of words per chunk (default: 1000)
-        
-    Returns:
-        List of text chunks
-    """
-    # Split text into sentences
-    sentences = nltk.sent_tokenize(text)
-    chunks = []
-    current_chunk = []
-    current_word_count = 0
-    
-    for sentence in sentences:
-        # Count words in the sentence
-        sentence_words = len(re.findall(r'\b\w+\b', sentence))
-        
-        # If adding this sentence would exceed chunk size and we already have content,
-        # finalize the current chunk and start a new one
-        if current_word_count + sentence_words > chunk_size and current_chunk:
-            chunks.append(' '.join(current_chunk))
-            current_chunk = []
-            current_word_count = 0
-        
-        # Add the sentence to the current chunk
-        current_chunk.append(sentence)
-        current_word_count += sentence_words
-    
-    # Add the last chunk if it has content
-    if current_chunk:
-        chunks.append(' '.join(current_chunk))
-    
-    return chunks
-
-def merge_summaries(summaries: List[dict]) -> dict:
-    """
-    Merge multiple summary dictionaries, removing redundancies.
-    
-    Args:
-        summaries: List of summary dictionaries to merge
-        
-    Returns:
-        Merged summary dictionary
-    """
-    if not summaries:
-        return {'Error': 'No summaries to merge'}
-    
-    # Initialize with the first summary
-    merged = summaries[0].copy()
-    
-    # Merge the rest
-    for summary in summaries[1:]:
-        for key, value in summary.items():
-            if key in merged:
-                # Combine values and remove redundancies
-                combined = merged[key] + " " + value
-                # Simple deduplication by splitting into sentences and removing duplicates
-                sentences = nltk.sent_tokenize(combined)
-                unique_sentences = []
-                for sentence in sentences:
-                    sentence = sentence.strip()
-                    if sentence and not any(sentence in s for s in unique_sentences):
-                        unique_sentences.append(sentence)
-                merged[key] = ' '.join(unique_sentences)
-            else:
-                merged[key] = value
-    
-    return merged
 
 def generate_summary(text: str, prompt, discipline) -> dict:
     structure = "Title of the Paper:&delete \
@@ -107,7 +35,22 @@ def generate_summary(text: str, prompt, discipline) -> dict:
                                                                 DO NOT modify the :&delete combination, it is for post processing. Your response must contain all 6 sections, complete with the section title \
                                                                 and the corresponding information, and must not exceed the token limit. Ensure all of your information included in the response is drawn directly \
                                                                 from the text and all prior context, do not pull new information from other sources. avoid wasting tokens on stopwords and common introductory \
-                                                                statements, you must maximize the valuable insight drawn from data-driven analysis, ensure maximum information. Text: {text}'
+                                                                statements, you must maximize the valuable insight drawn from data-driven analysis, ensure maximum information. Text: {text}. 
+                                                                Your objective is to maximize the value and information density provided in your response and preserve the numerical findings and significant statistics, hence avoid sentence starters and overtly flowery diction, simply focus on the category that is being discussed. \
+                                                                For further guidance, refer to the following process when composing your summary, provided that you have already read the paper once. On the second read, follow these steps. \
+                                                                Step 1: Identify the research question. \
+                                                                Step 2: Understand the context of the topic and the central argument or focus of the study. \
+                                                                Step 3: Gather contextual evidence from the literature examination done throughout the paper. \
+                                                                Step 4: Begin clumping evidence and findings into categories: Supporting initial hypothesis, contradicting initial hypothesis, contextualizing research situation. \
+                                                                Step 5: Evaluate how the methodology used in the research could possibly lead to inconsistencies, or if there are holes in the research that must be addressed \
+                                                                Step 6: Summarize the key findings and methodology in a way that is easy to understand and relate to the research question.
+                                                                Avoid using any of the following colloquialisms of AI speech:
+                                                                - This research explores...
+                                                                - Many studies have investigated this topic
+                                                                - Over the years, this field has seen significant changes
+                                                                - provides a comprehensive overview of...
+                                                                - any overly general, vague or redundant findings
+                                                                - an overreliance on qualifiers that are not supported by specific data.'
                                                         }]
                                               )
     if response.choices and len(response.choices) > 0:
@@ -121,103 +64,16 @@ def generate_summary(text: str, prompt, discipline) -> dict:
     else:
         return {'Error': 'Failed to generate summary'}
 
-def clean(text: str) -> Union[str, list]:
-    # Use a simple regex-based tokenization instead of nltk.word_tokenize
-    # This avoids the dependency on punkt_tab
-    tokens = re.findall(r'\b\w+\b', text)
-    tokens = [token for token in tokens if token.isalnum()]
-    stop_words = set(nltk.corpus.stopwords.words('english'))
-    tokens = [token for token in tokens if token.lower() not in stop_words]
-    text = ' '.join(tokens)
-    if len(tokens) > 4096:
-        agg = []
-        for i in range(0, len(tokens), 4096):
-            agg.append(tokens[i:i+4096])
-        return agg
-    return text
+def extract_keywords(text):
+    extractor = yake.KeywordExtractor(n=2, top=10)
+    keywords = extractor.extract_keywords(text)
+    return [keyword[0] for keyword in keywords]
 
-def pipeline():
-    discipline = "Computer Science (AI / Deep Learning)"
-    prompt = "A multiple-path gradient projection method for solving the logit-based stochastic user equilibrium model?"
-
-    text = """
-        Title: The Role of Artificial Intelligence in Modern Healthcare
-
-        Abstract:
-        Artificial Intelligence (AI) has become an integral part of modern healthcare, revolutionizing diagnostics, treatment planning, and patient management. This paper explores the current applications, advantages, and challenges of AI in the medical field. AI-driven technologies such as deep learning, natural language processing, and predictive analytics have enhanced clinical decision-making and improved patient outcomes. The study also discusses the ethical and regulatory concerns associated with AI deployment in healthcare.
-
-        Introduction:
-        The integration of artificial intelligence in healthcare has transformed traditional medical practices. AI systems are being used to analyze complex medical data, support diagnostic procedures, and personalize patient treatment. As AI technology advances, its applications in disease prediction, radiology, and robotic-assisted surgery continue to expand. However, ethical considerations, data privacy issues, and the potential for algorithmic biases must be carefully addressed to ensure equitable healthcare delivery.
-
-        Applications of AI in Healthcare:
-        1. **Medical Imaging and Diagnostics**:
-        - AI-powered radiology tools have improved the accuracy of detecting anomalies in X-rays, MRIs, and CT scans. 
-        - Deep learning algorithms analyze imaging data to identify diseases such as cancer, cardiovascular conditions, and neurological disorders.
-        - AI systems provide automated image interpretation, reducing workload for radiologists.
-
-        2. **Personalized Medicine and Predictive Analytics**:
-        - AI enables precision medicine by analyzing patient genetics, lifestyle, and medical history to recommend tailored treatments.
-        - Predictive analytics models assess risk factors and forecast disease progression.
-        - Machine learning algorithms optimize drug discovery by analyzing biochemical data.
-
-        3. **AI in Surgery and Robotics**:
-        - Robotic-assisted surgical systems, such as the Da Vinci Surgical System, enhance surgical precision and reduce recovery times.
-        - AI-powered robots assist in minimally invasive procedures, reducing human error.
-        - Autonomous surgical robots are being developed to perform complex surgeries with minimal human intervention.
-
-        4. **Electronic Health Records (EHR) and Natural Language Processing (NLP)**:
-        - NLP techniques process unstructured medical records, extracting critical patient information.
-        - AI-driven EHR systems streamline data entry, reduce administrative burden, and enhance physician efficiency.
-        - Chatbots assist in patient communication and preliminary symptom assessment.
-
-        Challenges and Ethical Considerations:
-        1. **Data Privacy and Security**:
-        - AI systems require access to large volumes of patient data, raising concerns about data security and patient confidentiality.
-        - Cybersecurity threats pose risks to AI-driven healthcare applications.
-        - Regulations such as HIPAA and GDPR aim to safeguard sensitive health information.
-
-        2. **Algorithmic Bias and Ethical Dilemmas**:
-        - Biases in AI training data can lead to disparities in diagnosis and treatment recommendations.
-        - AI models must be trained on diverse datasets to ensure fairness and equity in healthcare.
-        - Ethical frameworks should guide AI deployment to prevent discrimination and ensure transparency.
-
-        3. **Regulatory and Legal Challenges**:
-        - AI-driven medical devices and software require regulatory approval to ensure safety and efficacy.
-        - Policymakers must establish guidelines for AI use in clinical practice.
-        - Liability concerns arise when AI-based recommendations lead to medical errors.
-
-        Future Directions and Conclusion:
-        The future of AI in healthcare is promising, with continuous advancements in deep learning, genomics, and robotics. AI-driven solutions have the potential to bridge gaps in global healthcare accessibility, particularly in remote and underserved areas. Collaboration between healthcare professionals, AI developers, and policymakers is essential to harness AI's full potential while addressing ethical and regulatory challenges. As AI technology evolves, its integration into modern healthcare systems will continue to enhance patient care and drive medical innovation.
-
-        References:
-        1. Topol, E. J. (2019). Deep Medicine: How Artificial Intelligence Can Make Healthcare Human Again. Basic Books.
-        2. Jiang, F., Jiang, Y., Zhi, H., Dong, Y., Li, H., Ma, S., ... & Wang, Y. (2017). Artificial intelligence in healthcare: past, present, and future. Stroke and vascular neurology, 2(4), 230-243.
-        3. Rajpurkar, P., Irvin, J., Zhu, K., Yang, B., Mehta, H., Duan, T., ... & Ng, A. Y. (2017). CheXNet: Radiologist-Level Pneumonia Detection on Chest X-Rays with Deep Learning. arXiv preprint arXiv:1711.05225.
-        4. Patel, V. L., Shortliffe, E. H., Stefanelli, M., Szolovits, P., Berthold, M. R., Bellazzi, R., & Abu-Hanna, A. (2009). The coming of age of artificial intelligence in medicine. Artificial Intelligence in medicine, 46(1), 5-17.
-        """
-    
-    # Check if text needs chunking (over 1000 words)
-    word_count = len(re.findall(r'\b\w+\b', text))
-    
-    if word_count > 1000:
-        # Chunk the text
-        chunks = chunk_text(text)
-        
-        # Process each chunk
-        chunk_summaries = []
-        for chunk in chunks:
-            cleaned_chunk = clean(chunk)
-            chunk_summary = generate_summary(cleaned_chunk, prompt, discipline)
-            chunk_summaries.append(chunk_summary)
-        
-        # Merge the summaries
-        summary = merge_summaries(chunk_summaries)
-    else:
-        # Process as a single chunk
-        cleaned_text = clean(text)
-        summary = generate_summary(cleaned_text, prompt, discipline)
-    
-    return summary
+def filter_sentences(summary):
+    sentences = summary.split(". ")
+    keywords = extract_keywords(summary)
+    filtered_sentences = [sentence for sentence in sentences if any(keyword.lower() in sentence.lower() for keyword in keywords)]
+    return ". ".join(filtered_sentences)
 
 if __name__ == "__main__":
-    print(pipeline())
+    print(())
