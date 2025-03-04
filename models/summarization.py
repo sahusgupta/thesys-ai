@@ -23,7 +23,7 @@ def generate_summary(text: str, prompt, discipline) -> dict:
                                                                 generate a comprehensive and evaluative summary of the following literature, returning your summary in the following structure: {structure}\
                                                                 DO NOT modify the :&delete combination, it is for post processing. Your response must contain all 6 sections, complete with the section title \
                                                                 and the corresponding information, and must not exceed the token limit. Ensure all of your information included in the response is drawn directly \
-                                                                from the text and all prior context, do not pull new information from other sources.'
+                                                                from the text and all prior context, do not pull new information from other sources. Try to avoid wasting tokens on stopwords, ensure maximum information.'
                                                         }]
                                               )
     if response.choices and response.choices[0]['content']:
