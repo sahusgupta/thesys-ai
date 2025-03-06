@@ -53,10 +53,16 @@ def create_faiss_index(embeddings_data: List[tuple]) -> tuple:
     # Extract just the embedding vectors
     embedding_vectors = [item[1] for item in embeddings_data]
     text_db = {i: embeddings_data[i][0] for i in range(len(embeddings_data))}
+    print(text_db)
     import numpy as np
     vectors = np.array(embedding_vectors).astype("float32")
     vector_dim = len(vectors[0])
     index = faiss.IndexFlatL2(vector_dim)
     index.add(vectors)
     return index, text_db
+    
+
+def find_most_similar(text):
+    embedding = embed_text(chunk_extracted_text(text))
+    faiss_index = create_faiss_index(embedding)
     
