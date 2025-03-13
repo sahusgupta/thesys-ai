@@ -1,9 +1,10 @@
 import json
-import fitz  # PyMuPDF
+import pymupdf  # PyMuPDF
 import os
 import requests
 from bs4 import BeautifulSoup
 import re
+from crossref.restful import Works
 
 def clean_text(text):
     # Remove headers/footers
@@ -19,7 +20,7 @@ def clean_text(text):
     return text.strip()
 
 def extract_pdf(pdf_path):
-    doc = fitz.open(pdf_path)
+    doc = pymupdf.open(pdf_path)
     
     # First, extract document metadata
     metadata = {
@@ -263,6 +264,26 @@ def process_document(file_path=None, url=None):
     else:
         raise ValueError("Either file_path or url must be provided")
 
+def fetch_metadata(path): 
+    metadata = {"title": None, 'author': "", "doi": None}
+    
+    if path.ends_with(".pdf"):
+        doc = pymupdf.open(path)
+        text = " ".join([page.get_text() for page in doc])
+    else:
+        with open(path, 'r', encoding='utf-8') as f:
+            text = f.read()
+    title_match = re.search(r"(?<=Title:\s)(.*)", text, re.IGNORECASE)
+    author_match = re.search(r"(?<=Author:\s)(.*)", text, re.IGNORECASE)
+    doi_match = re.search(r"\b10\.\d{4,9}/[-._;()/:A-Z0-9]+", text, re.IGNORECASE)
+
+    metadata["title"] = title_match.group(0) if title_match else "Unknown"
+    metadata["author"] = author_match.group(0) if author_match else "Unknown"
+    metadata["doi"] = doi_match.group(0) if doi_match else "Unknown"
+
+    return metadata    
+    
+ 
 if __name__ == "__main__":
     try:
         # Example usage with PDF
