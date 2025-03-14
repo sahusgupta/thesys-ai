@@ -107,41 +107,10 @@ Legal AI agents (for case law analysis).
 ✅ FastAPI Backend (for handling multi-agent queries).
 ✅ FAISS + Pinecone (for intelligent knowledge retrieval).
 
-🔧 Installation & Setup
-bash
-Copy
-Edit
-# Clone the Repository
-git clone https://github.com/your-repo/thesys.git
-cd thesys
-
-# Set Up Virtual Environment
-python3 -m venv env
-source env/bin/activate  # Mac/Linux
-env\Scripts\activate     # Windows
-
-# Install Dependencies
-pip install -r requirements.txt
-npm install  # If using frontend
-
-# Configure Environment Variables
-touch .env  # Create environment file
-📝 Hackathon Submission Requirements
-✅ GitHub Repo: Ensure all project files are public & well-documented.
-✅ Video Demo: 3-5 min video demonstrating Thesys’s core functionality.
-✅ Fetch.ai Agent Registration: Agents must be live on Agentverse.
-✅ README.md Tags: Include Fetch.ai Innovation Lab Badge:
-
-md
-Copy
-Edit
 ![tag : innovation-lab](https://img.shields.io/badge/innovation--lab-3D8BD3)
-🔥 Future Roadmap
-Improve AI reasoning for research-based Q&A.
-Enhance bias detection in research synthesis.
-Expand Fetch.ai Agent integrations for more specialized research fields.
+
 🚀 Thesys is redefining AI-powered research—join me on this journey!
 
 📌 Maintainers: Sahus Gupta | sahusgupta@gmail.com | https://www.linkedin.com/in/sahus-gupta-14495127b/
 
-
+DISCLAIMER: For the protection of my intellectual property, I won't publicly detail proprietary methods relating to multi-agent communication, fact-checking, and context management. 

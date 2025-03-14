@@ -35,7 +35,7 @@ MANIFEST
 
 # production
 /build
-
+/internals
 # misc
 ~/.DS_Store
 ~/.env.local
