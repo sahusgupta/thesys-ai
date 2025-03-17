@@ -107,10 +107,10 @@ Legal AI agents (for case law analysis).
 ✅ FastAPI Backend (for handling multi-agent queries).
 ✅ FAISS + Pinecone (for intelligent knowledge retrieval).
 
-![tag : innovation-lab](https://img.shields.io/badge/innovation--lab-3D8BD3)
-
 🚀 Thesys is redefining AI-powered research—join me on this journey!
 
 📌 Maintainers: Sahus Gupta | sahusgupta@gmail.com | https://www.linkedin.com/in/sahus-gupta-14495127b/
 
 DISCLAIMER: For the protection of my intellectual property, I won't publicly detail proprietary methods relating to multi-agent communication, fact-checking, and context management. 
+
+![tag : innovation-lab](https://img.shields.io/badge/innovation--lab-3D8BD3)
