@@ -13,3 +13,10 @@
 
 # Backend:
     - handles communication between models and users and between models.
+
+
+# Tech Stack:
+    - Backend: FastAPI
+    - Frontend: React.js
+    - Summarization: OpenAI
+    - AI model usage: Fetch.ai / Agentverse
