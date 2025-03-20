@@ -1,0 +1,18 @@
+.section-hidden {
+    opacity: 0;
+    transform: translateY(20px);
+    transition: all 0.8s ease-out;
+  }
+  .section-visible {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  a {
+    text-decoration: none;
+  }
+  
+  a:hover,
+  a:focus {
+    text-decoration: none;
+  }
+  
