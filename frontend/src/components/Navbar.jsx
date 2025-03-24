@@ -9,7 +9,7 @@ const Navbar = () => (
       <img src={logo} alt="Thesys AI Logo" className="h-10 invert" />
     </Link>
     <div className="flex">
-      {['Dashboard', 'Upload', 'Search', 'Chat', 'Citations', 'Library', 'Settings'].map((item) => (
+      {['Dashboard', 'Settings'].map((item) => (
         <Link 
           key={item} 
           to={`/${item.toLowerCase()}`} 

@@ -99,7 +99,7 @@ const Home = () => (
 
     {/* Call to Action */}
     <section className="py-20 text-center" style={{ backgroundColor: themeColor, color: 'white' }}>
-      <h2 className="text-4xl font-bold mb-6">Ready to Simplify Your Research?</h2>
+      <h2 className="text-4xl font-bold mb-6">Ready to Level Up Your Research?</h2>
       <Link 
         to="/upload" 
         className="px-10 py-3 rounded-full text-lg transition duration-300 shadow-lg"

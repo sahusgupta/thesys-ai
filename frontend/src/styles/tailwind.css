@@ -87,3 +87,7 @@ input:checked + .slider:before {
 .no-underline-links a {
   @apply no-underline;
 }
+
+.container {
+  width: 80%
+}

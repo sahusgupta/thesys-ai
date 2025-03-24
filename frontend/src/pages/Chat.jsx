@@ -1,14 +1,19 @@
-import React, { useState, useEffect } from 'react';
+// src/pages/Chat.jsx
+import React, { useState, useEffect, useRef } from 'react';
 
-const Chat = () => {
+export default function Chat() {
   const [message, setMessage] = useState('');
   const [chats, setChats] = useState(() => {
     const savedChats = sessionStorage.getItem('chats');
-    return savedChats ? JSON.parse(savedChats) : [{
-      id: 'default',
-      name: 'Untitled Chat',
-      history: []
-    }];
+    return savedChats
+      ? JSON.parse(savedChats)
+      : [
+          {
+            id: 'default',
+            name: 'Untitled Chat',
+            history: [],
+          },
+        ];
   });
   const [activeChat, setActiveChat] = useState(() => {
     const savedActiveChat = sessionStorage.getItem('activeChat');
@@ -18,57 +23,60 @@ const Chat = () => {
   const [editingName, setEditingName] = useState(null);
   const [newChatName, setNewChatName] = useState('');
 
-  // Save chats to sessionStorage whenever they change
+  // Refs
+  const chatContainerRef = useRef(null);
+
+  // Save chats whenever they change
   useEffect(() => {
     sessionStorage.setItem('chats', JSON.stringify(chats));
   }, [chats]);
 
-  // Save active chat to sessionStorage whenever it changes
+  // Save active chat whenever it changes
   useEffect(() => {
     sessionStorage.setItem('activeChat', activeChat);
   }, [activeChat]);
 
+  // Scroll to bottom whenever new messages or typing status changes
+  useEffect(() => {
+    if (chatContainerRef.current) {
+      chatContainerRef.current.scrollTo({
+        top: chatContainerRef.current.scrollHeight,
+        behavior: 'smooth',
+      });
+    }
+  }, [chats, isTyping]);
+
+  /** Basic chatbot logic */
   const generateResponse = async (userMessage) => {
-    // Simple response logic based on keywords
-    const message = userMessage.toLowerCase();
+    const lowerMsg = userMessage.toLowerCase();
     let response = '';
 
-    if (message.includes('hello') || message.includes('hi')) {
-      response = "Hello! How can I help you today?";
-    } else if (message.includes('help')) {
-      response = "I'm here to help! What do you need assistance with?";
-    } else if (message.includes('bye')) {
-      response = "Goodbye! Have a great day!";
-    } else if (message.includes('thank')) {
-      response = "You're welcome!";
-    } else if (message.includes('weather')) {
-      response = "I'm sorry, I don't have access to real-time weather data.";
-    } else if (message.includes('name')) {
-      response = "I'm Thesys, your AI research assistant!";
-    } else if (message.includes('research') || message.includes('paper')) {
-      response = "I can help you with research papers! Would you like to search for papers, manage citations, or get paper summaries?";
-    } else if (message.includes('citation')) {
-      response = "I can help format citations in various styles like APA, MLA, and Chicago. What would you like to cite?";
+    if (/\b(hi|hello|hey)\b/.test(lowerMsg)) {
+      response = 'Hello there! How can I assist you today?';
+    } else if (/\bthanks?\b/.test(lowerMsg)) {
+      response = "You're welcome! Anything else I can help with?";
+    } else if (/\bbye\b/.test(lowerMsg)) {
+      response = 'Goodbye! Have a wonderful day.';
     } else {
-      response = "I understand you're asking about " + userMessage + ". Could you please provide more details or rephrase your question?";
+      response = `I see you're asking about "${userMessage}". Please tell me more.`;
     }
 
-    return new Promise(resolve => {
-      setTimeout(() => {
-        resolve(response);
-      }, 1000);
+    return new Promise((resolve) => {
+      setTimeout(() => resolve(response), 1000);
     });
   };
 
+  /** Chat creation / editing logic */
   const createNewChat = () => {
+    const newId = Date.now().toString();
     const newChat = {
-      id: Date.now().toString(),
+      id: newId,
       name: 'Untitled Chat',
-      history: []
+      history: [],
     };
     setChats([...chats, newChat]);
-    setActiveChat(newChat.id);
-    setEditingName(newChat.id);
+    setActiveChat(newId);
+    setEditingName(newId);
     setNewChatName('');
   };
 
@@ -79,11 +87,13 @@ const Chat = () => {
 
   const saveChatName = () => {
     if (newChatName.trim()) {
-      setChats(prev => prev.map(chat => 
-        chat.id === editingName 
-          ? { ...chat, name: newChatName.trim() }
-          : chat
-      ));
+      setChats((prev) =>
+        prev.map((chat) =>
+          chat.id === editingName
+            ? { ...chat, name: newChatName.trim() }
+            : chat
+        )
+      );
     }
     setEditingName(null);
     setNewChatName('');
@@ -95,39 +105,43 @@ const Chat = () => {
     }
   };
 
+  /** Sending a user message */
   const sendMessage = async () => {
-    if (message.trim() !== '') {
-      // Add user message
-      setChats(prev => prev.map(chat => {
+    if (!message.trim()) return;
+    const userMessage = message;
+
+    // Add the user's message to the active chat
+    setChats((prev) =>
+      prev.map((chat) => {
         if (chat.id === activeChat) {
           return {
             ...chat,
-            history: [...chat.history, { sender: 'You', text: message }]
+            history: [...chat.history, { sender: 'You', text: userMessage }],
           };
         }
         return chat;
-      }));
+      })
+    );
 
-      const userMessage = message;
-      setMessage('');
-      setIsTyping(true);
+    setMessage('');
+    setIsTyping(true);
 
-      // Get AI response
-      const response = await generateResponse(userMessage);
+    // Simulate AI logic
+    const response = await generateResponse(userMessage);
 
-      // Add AI response
-      setChats(prev => prev.map(chat => {
+    // Add the AI response to the active chat
+    setChats((prev) =>
+      prev.map((chat) => {
         if (chat.id === activeChat) {
           return {
             ...chat,
-            history: [...chat.history, { sender: 'Thesys', text: response }]
+            history: [...chat.history, { sender: 'Thesys', text: response }],
           };
         }
         return chat;
-      }));
-
-      setIsTyping(false);
-    }
+      })
+    );
+    setIsTyping(false);
   };
 
   const handleKeyPress = (e) => {
@@ -137,101 +151,135 @@ const Chat = () => {
     }
   };
 
-  const activeHistory = chats.find(chat => chat.id === activeChat)?.history || [];
+  // Grab the active chat history
+  const activeHistory =
+    chats.find((chat) => chat.id === activeChat)?.history || [];
 
   return (
-    <div className="p-10 mt-10 flex gap-4">
-      {/* Sidebar with chat list */}
-      <div className="w-64 border-r pr-4">
-        <button 
-          onClick={createNewChat}
-          className="w-full mb-4 bg-black text-white px-4 py-2 rounded hover:bg-gray-700 transition duration-200"
-        >
-          New Chat
-        </button>
-        <div className="space-y-2">
-          {chats.map(chat => (
-            <div
-              key={chat.id}
-              className={`p-2 rounded ${
-                chat.id === activeChat ? 'bg-gray-200' : 'hover:bg-gray-100'
-              }`}
-            >
-              {editingName === chat.id ? (
-                <input
-                  type="text"
-                  value={newChatName}
-                  onChange={(e) => setNewChatName(e.target.value)}
-                  onBlur={saveChatName}
-                  onKeyPress={handleNameKeyPress}
-                  className="w-full p-1 rounded border"
-                  autoFocus
-                />
-              ) : (
-                <div className="flex justify-between items-center">
-                  <span 
-                    className="cursor-pointer flex-grow"
-                    onClick={() => setActiveChat(chat.id)}
-                  >
-                    {chat.name}
-                  </span>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      startEditingName(chat.id, chat.name);
-                    }}
-                    className="text-gray-500 hover:text-black ml-2 text-sm"
-                  >
-                    ✎
-                  </button>
-                </div>
-              )}
-            </div>
-          ))}
+    <div className="min-h-screen bg-gray-50 text-gray-900 flex flex-col">
+      {/* Gradient banner */}
+      <div
+        className="p-4 md:p-6 text-gray-800 shadow-sm relative overflow-hidden"
+        style={{
+          background: 'linear-gradient(120deg, #f0f9ff 0%, #e0f4f8 35%, #ffffff 100%)',
+        }}
+      >
+        <div className="relative flex flex-col md:flex-row md:items-center md:justify-between">
+          <div>
+            <h1 className="text-2xl font-bold mb-2">Chat with Thesys AI</h1>
+            <p className="text-sm text-gray-700 max-w-lg">
+              Ask questions, explore ideas, or just say hello.
+            </p>
+          </div>
         </div>
       </div>
 
-      {/* Chat area */}
-      <div className="flex-1">
-        <h2 className="text-3xl font-bold mb-4">Chat with Thesys AI</h2>
-
-        <div className="border border-gray-300 bg-gray-100 rounded-lg h-[400px] overflow-auto p-4 mb-4">
-          {activeHistory.map((msg, idx) => (
-            <div key={idx} className={`my-2 ${msg.sender === 'You' ? 'text-right' : 'text-left'}`}>
-              <span className={`inline-block p-2 rounded-lg ${msg.sender === 'You' ? 'bg-black text-white' : 'bg-gray-200 text-black'}`}>
-                <strong>{msg.sender}: </strong>
-                {msg.text}
-              </span>
-            </div>
-          ))}
-          {isTyping && (
-            <div className="text-left">
-              <span className="inline-block p-2 rounded-lg bg-gray-200 text-black">
-                <strong>Thesys:</strong> typing...
-              </span>
-            </div>
-          )}
+      <div className="flex-1 p-4 md:p-6 flex gap-4">
+        {/* Sidebar */}
+        <div className="w-64 bg-white border-r pr-4 py-3 rounded shadow-sm hidden md:block">
+          <button
+            onClick={createNewChat}
+            className="w-full mb-4 bg-[#4B8795] text-white px-4 py-2 rounded hover:bg-[#407986] transition text-sm"
+          >
+            New Chat
+          </button>
+          <div className="space-y-2 text-sm">
+            {chats.map((chat) => (
+              <div
+                key={chat.id}
+                onClick={() => setActiveChat(chat.id)}
+                className={`p-2 rounded cursor-pointer ${
+                  chat.id === activeChat ? 'bg-gray-200' : 'hover:bg-gray-100'
+                }`}
+              >
+                {editingName === chat.id ? (
+                  <input
+                    type="text"
+                    value={newChatName}
+                    onChange={(e) => setNewChatName(e.target.value)}
+                    onBlur={saveChatName}
+                    onKeyPress={handleNameKeyPress}
+                    className="w-full p-1 rounded border"
+                    autoFocus
+                  />
+                ) : (
+                  <div className="flex justify-between items-center">
+                    <span className="flex-grow">{chat.name}</span>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        startEditingName(chat.id, chat.name);
+                      }}
+                      className="text-gray-500 hover:text-black ml-2 text-xs"
+                    >
+                      ✎
+                    </button>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
         </div>
 
-        <div className="flex gap-2">
-          <textarea
-            className="border rounded p-3 flex-grow resize-none"
-            placeholder="Type your question here..."
-            value={message}
-            onChange={(e) => setMessage(e.target.value)}
-            onKeyPress={handleKeyPress}
-            rows="1"
-          />
-          <button 
-            onClick={sendMessage} 
-            className="bg-black text-white px-6 rounded hover:bg-gray-700 transition duration-200"
+        {/* Main Chat Area */}
+        <div className="flex-1 flex flex-col">
+          {/* Fixed-size chat container with scrollbar */}
+          <div
+            ref={chatContainerRef}
+            className="border border-gray-300 bg-gradient-to-br from-gray-100 via-white to-gray-100 
+                       rounded-lg p-4 mb-4 h-[500px] overflow-y-auto transition"
           >
-            Send
-          </button>
+            {activeHistory.map((msg, idx) => (
+              <MessageBubble key={idx} sender={msg.sender} text={msg.text} />
+            ))}
+            {isTyping && (
+              <div className="my-2 text-left">
+                <span className="inline-block p-2 rounded-lg bg-gray-200 text-black">
+                  <strong>Thesys:</strong> typing...
+                </span>
+              </div>
+            )}
+          </div>
+
+          {/* Message input */}
+          <div className="flex gap-2">
+            <textarea
+              className="border rounded p-2 flex-grow resize-none text-sm focus:outline-none focus:ring focus:ring-[#4B8795]/50"
+              placeholder="Type your question here..."
+              value={message}
+              onChange={(e) => setMessage(e.target.value)}
+              onKeyPress={handleKeyPress}
+              rows="1"
+            />
+            <button
+              onClick={sendMessage}
+              className="bg-[#4B8795] text-white px-6 py-2 rounded hover:bg-[#407986] transition duration-200 text-sm"
+            >
+              Send
+            </button>
+          </div>
         </div>
       </div>
     </div>
   );
-};
+}
 
-export default Chat;
+/**
+ * Single message bubble with a brand-themed style.
+ */
+function MessageBubble({ sender, text }) {
+  const isUser = sender === 'You';
+
+  return (
+    <div className={`my-2 flex ${isUser ? 'justify-end' : 'justify-start'}`}>
+      <div
+        className={`max-w-[70%] p-2 rounded-lg shadow-sm ${
+          isUser ? 'bg-[#4B8795] text-white' : 'bg-white border'
+        }`}
+      >
+        <span className="block text-xs font-bold mb-1">{sender}</span>
+        <span className="text-sm leading-snug whitespace-pre-wrap">{text}</span>
+      </div>
+    </div>
+  );
+}
