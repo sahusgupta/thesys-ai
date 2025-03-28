@@ -1,42 +1,57 @@
-// src/pages/Chat.jsx
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import axios from 'axios';
+
+// Message Bubble Component
+const MessageBubble = React.memo(({ sender, text }) => {
+  const isUser = sender === 'You';
+
+  return (
+    <div className={`my-2 flex ${isUser ? 'justify-end' : 'justify-start'}`}>
+      <div
+        className={`max-w-[70%] p-3 rounded-lg shadow-sm ${
+          isUser 
+            ? 'bg-[#4B8795] text-white' 
+            : 'bg-[#F0F4F6] text-gray-800'
+        }`}
+      >
+        <span className="block text-xs font-bold mb-1 opacity-80">{sender}</span>
+        <span className="text-sm leading-snug whitespace-pre-wrap">{text}</span>
+      </div>
+    </div>
+  );
+});
 
 export default function Chat() {
+  // State Management
   const [message, setMessage] = useState('');
   const [chats, setChats] = useState(() => {
-    const savedChats = sessionStorage.getItem('chats');
+    const savedChats = localStorage.getItem('thesys-chats');
     return savedChats
       ? JSON.parse(savedChats)
-      : [
-          {
-            id: 'default',
-            name: 'Untitled Chat',
-            history: [],
-          },
-        ];
+      : [{ id: 'default', name: 'Untitled Chat', history: [] }];
   });
-  const [activeChat, setActiveChat] = useState(() => {
-    const savedActiveChat = sessionStorage.getItem('activeChat');
-    return savedActiveChat || 'default';
-  });
+  const [activeChat, setActiveChat] = useState(() => 
+    localStorage.getItem('thesys-active-chat') || 'default'
+  );
   const [isTyping, setIsTyping] = useState(false);
   const [editingName, setEditingName] = useState(null);
   const [newChatName, setNewChatName] = useState('');
+  const [isDropdownOpen, setIsDropdownOpen] = useState({});
 
   // Refs
   const chatContainerRef = useRef(null);
+  const messageInputRef = useRef(null);
 
-  // Save chats whenever they change
+  // Persistent Storage
   useEffect(() => {
-    sessionStorage.setItem('chats', JSON.stringify(chats));
+    localStorage.setItem('thesys-chats', JSON.stringify(chats));
   }, [chats]);
 
-  // Save active chat whenever it changes
   useEffect(() => {
-    sessionStorage.setItem('activeChat', activeChat);
+    localStorage.setItem('thesys-active-chat', activeChat);
   }, [activeChat]);
 
-  // Scroll to bottom whenever new messages or typing status changes
+  // Auto-scroll effect
   useEffect(() => {
     if (chatContainerRef.current) {
       chatContainerRef.current.scrollTo({
@@ -46,38 +61,44 @@ export default function Chat() {
     }
   }, [chats, isTyping]);
 
-  /** Basic chatbot logic */
-  const generateResponse = async (userMessage) => {
-    const lowerMsg = userMessage.toLowerCase();
-    let response = '';
-
-    if (/\b(hi|hello|hey)\b/.test(lowerMsg)) {
-      response = 'Hello there! How can I assist you today?';
-    } else if (/\bthanks?\b/.test(lowerMsg)) {
-      response = "You're welcome! Anything else I can help with?";
-    } else if (/\bbye\b/.test(lowerMsg)) {
-      response = 'Goodbye! Have a wonderful day.';
-    } else {
-      response = `I see you're asking about "${userMessage}". Please tell me more.`;
+  // API-based response generation
+  const generateResponse = useCallback(async (userMessage) => {
+    try {
+      setIsTyping(true);
+      const response = await axios.post('/api/chat', { 
+        message: userMessage,
+        chatId: activeChat 
+      });
+      return response.data.message;
+    } catch (error) {
+      console.error('Error generating response:', error);
+      return 'I encountered an error. Could you please rephrase your message?';
+    } finally {
+      setIsTyping(false);
     }
+  }, [activeChat]);
 
-    return new Promise((resolve) => {
-      setTimeout(() => resolve(response), 1000);
-    });
-  };
-
-  /** Chat creation / editing logic */
+  // Chat Management Functions
   const createNewChat = () => {
-    const newId = Date.now().toString();
+    const newId = `chat-${Date.now()}`;
     const newChat = {
       id: newId,
       name: 'Untitled Chat',
       history: [],
     };
-    setChats([...chats, newChat]);
+    setChats(prev => [...prev, newChat]);
     setActiveChat(newId);
     setEditingName(newId);
     setNewChatName('');
+  };
+
+  const deleteChat = (chatId) => {
+    if (chats.length > 1) {
+      setChats(prev => prev.filter(chat => chat.id !== chatId));
+      setActiveChat(chats.find(chat => chat.id !== chatId)?.id || 'default');
+    } else {
+      alert('You must have at least one chat.');
+    }
   };
 
   const startEditingName = (chatId, currentName) => {
@@ -87,10 +108,10 @@ export default function Chat() {
 
   const saveChatName = () => {
     if (newChatName.trim()) {
-      setChats((prev) =>
-        prev.map((chat) =>
-          chat.id === editingName
-            ? { ...chat, name: newChatName.trim() }
+      setChats(prev => 
+        prev.map(chat => 
+          chat.id === editingName 
+            ? { ...chat, name: newChatName.trim() } 
             : chat
         )
       );
@@ -99,51 +120,50 @@ export default function Chat() {
     setNewChatName('');
   };
 
-  const handleNameKeyPress = (e) => {
-    if (e.key === 'Enter') {
-      saveChatName();
-    }
-  };
-
-  /** Sending a user message */
+  // Message Sending Logic
   const sendMessage = async () => {
-    if (!message.trim()) return;
-    const userMessage = message;
+    const trimmedMessage = message.trim();
+    if (!trimmedMessage) return;
 
-    // Add the user's message to the active chat
-    setChats((prev) =>
-      prev.map((chat) => {
-        if (chat.id === activeChat) {
-          return {
-            ...chat,
-            history: [...chat.history, { sender: 'You', text: userMessage }],
-          };
-        }
-        return chat;
-      })
+    // Update chat history with user message
+    setChats(prev => 
+      prev.map(chat => 
+        chat.id === activeChat
+          ? { 
+              ...chat, 
+              history: [...chat.history, { sender: 'You', text: trimmedMessage }] 
+            }
+          : chat
+      )
     );
 
     setMessage('');
-    setIsTyping(true);
+    messageInputRef.current?.focus();
 
-    // Simulate AI logic
-    const response = await generateResponse(userMessage);
+    try {
+      // Generate AI response
+      const aiResponse = await generateResponse(trimmedMessage);
 
-    // Add the AI response to the active chat
-    setChats((prev) =>
-      prev.map((chat) => {
-        if (chat.id === activeChat) {
-          return {
-            ...chat,
-            history: [...chat.history, { sender: 'Thesys', text: response }],
-          };
-        }
-        return chat;
-      })
-    );
-    setIsTyping(false);
+      // Update chat history with AI response
+      setChats(prev => 
+        prev.map(chat => 
+          chat.id === activeChat
+            ? { 
+                ...chat, 
+                history: [
+                  ...chat.history, 
+                  { sender: 'Thesys', text: aiResponse }
+                ] 
+              }
+            : chat
+        )
+      );
+    } catch (error) {
+      alert('Failed to send message');
+    }
   };
 
+  // Event Handlers
   const handleKeyPress = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -151,134 +171,155 @@ export default function Chat() {
     }
   };
 
-  // Grab the active chat history
-  const activeHistory =
-    chats.find((chat) => chat.id === activeChat)?.history || [];
+  // Derived Data
+  const activeHistory = 
+    chats.find(chat => chat.id === activeChat)?.history || [];
 
   return (
-    <div className="min-h-screen bg-gray-50 text-gray-900 flex flex-col">
-      {/* Gradient banner */}
-      <div
-        className="p-4 md:p-6 text-gray-800 shadow-sm relative overflow-hidden"
-        style={{
-          background: 'linear-gradient(120deg, #f0f9ff 0%, #e0f4f8 35%, #ffffff 100%)',
-        }}
-      >
-        <div className="relative flex flex-col md:flex-row md:items-center md:justify-between">
-          <div>
-            <h1 className="text-2xl font-bold mb-2">Chat with Thesys AI</h1>
-            <p className="text-sm text-gray-700 max-w-lg">
-              Ask questions, explore ideas, or just say hello.
-            </p>
-          </div>
-        </div>
-      </div>
+    <div className="flex h-screen bg-white">
+      {/* Sidebar */}
+      <div className="w-64 bg-[#F0F4F6] border-r p-4 flex flex-col">
+        <button 
+          onClick={createNewChat}
+          className="mb-4 flex items-center gap-2 p-2 bg-[#4B8795] text-white rounded hover:bg-[#407986] transition"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <line x1="12" y1="5" x2="12" y2="19"></line>
+            <line x1="5" y1="12" x2="19" y2="12"></line>
+          </svg>
+          New Chat
+        </button>
 
-      <div className="flex-1 p-4 md:p-6 flex gap-4">
-        {/* Sidebar */}
-        <div className="w-64 bg-white border-r pr-4 py-3 rounded shadow-sm hidden md:block">
-          <button
-            onClick={createNewChat}
-            className="w-full mb-4 bg-[#4B8795] text-white px-4 py-2 rounded hover:bg-[#407986] transition text-sm"
-          >
-            New Chat
-          </button>
-          <div className="space-y-2 text-sm">
-            {chats.map((chat) => (
-              <div
-                key={chat.id}
-                onClick={() => setActiveChat(chat.id)}
-                className={`p-2 rounded cursor-pointer ${
-                  chat.id === activeChat ? 'bg-gray-200' : 'hover:bg-gray-100'
-                }`}
-              >
-                {editingName === chat.id ? (
-                  <input
-                    type="text"
-                    value={newChatName}
-                    onChange={(e) => setNewChatName(e.target.value)}
-                    onBlur={saveChatName}
-                    onKeyPress={handleNameKeyPress}
-                    className="w-full p-1 rounded border"
-                    autoFocus
-                  />
-                ) : (
-                  <div className="flex justify-between items-center">
-                    <span className="flex-grow">{chat.name}</span>
-                    <button
+        <div className="space-y-2 overflow-y-auto flex-grow">
+          {chats.map(chat => (
+            <div 
+              key={chat.id}
+              className={`
+                relative flex justify-between items-center p-2 rounded cursor-pointer 
+                ${chat.id === activeChat 
+                  ? 'bg-[#4B8795] text-white' 
+                  : 'hover:bg-gray-200'
+                }
+              `}
+              onClick={() => setActiveChat(chat.id)}
+            >
+              {editingName === chat.id ? (
+                <input
+                  value={newChatName}
+                  onChange={(e) => setNewChatName(e.target.value)}
+                  onBlur={saveChatName}
+                  onKeyDown={(e) => e.key === 'Enter' && saveChatName()}
+                  autoFocus
+                  className="w-full p-1 rounded border"
+                />
+              ) : (
+                <span className="flex-grow truncate">{chat.name}</span>
+              )}
+              
+              {editingName !== chat.id && (
+                <div className="flex items-center space-x-1">
+                  <button 
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      startEditingName(chat.id, chat.name);
+                    }}
+                    className="text-gray-500 hover:text-white ml-2 text-xs"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path>
+                    </svg>
+                  </button>
+                  
+                  <div className="relative">
+                    <button 
                       onClick={(e) => {
                         e.stopPropagation();
-                        startEditingName(chat.id, chat.name);
+                        setIsDropdownOpen(prev => ({
+                          ...prev,
+                          [chat.id]: !prev[chat.id]
+                        }));
                       }}
-                      className="text-gray-500 hover:text-black ml-2 text-xs"
+                      className="text-gray-500 hover:text-white ml-2 text-xs"
                     >
-                      ✎
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <circle cx="12" cy="12" r="1"></circle>
+                        <circle cx="12" cy="5" r="1"></circle>
+                        <circle cx="12" cy="19" r="1"></circle>
+                      </svg>
                     </button>
+                    
+                    {isDropdownOpen[chat.id] && (
+                      <div 
+                        className="absolute right-0 mt-2 w-40 bg-white border rounded shadow-lg z-10"
+                        onBlur={() => setIsDropdownOpen(prev => ({...prev, [chat.id]: false}))}
+                      >
+                        <button 
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            deleteChat(chat.id);
+                            setIsDropdownOpen(prev => ({...prev, [chat.id]: false}));
+                          }}
+                          className="w-full p-2 text-left text-red-600 hover:bg-red-50"
+                        >
+                          Delete Chat
+                        </button>
+                      </div>
+                    )}
                   </div>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Main Chat Area */}
-        <div className="flex-1 flex flex-col">
-          {/* Fixed-size chat container with scrollbar */}
-          <div
-            ref={chatContainerRef}
-            className="border border-gray-300 bg-gradient-to-br from-gray-100 via-white to-gray-100 
-                       rounded-lg p-4 mb-4 h-[500px] overflow-y-auto transition"
-          >
-            {activeHistory.map((msg, idx) => (
-              <MessageBubble key={idx} sender={msg.sender} text={msg.text} />
-            ))}
-            {isTyping && (
-              <div className="my-2 text-left">
-                <span className="inline-block p-2 rounded-lg bg-gray-200 text-black">
-                  <strong>Thesys:</strong> typing...
-                </span>
-              </div>
-            )}
-          </div>
-
-          {/* Message input */}
-          <div className="flex gap-2">
-            <textarea
-              className="border rounded p-2 flex-grow resize-none text-sm focus:outline-none focus:ring focus:ring-[#4B8795]/50"
-              placeholder="Type your question here..."
-              value={message}
-              onChange={(e) => setMessage(e.target.value)}
-              onKeyPress={handleKeyPress}
-              rows="1"
-            />
-            <button
-              onClick={sendMessage}
-              className="bg-[#4B8795] text-white px-6 py-2 rounded hover:bg-[#407986] transition duration-200 text-sm"
-            >
-              Send
-            </button>
-          </div>
+                </div>
+              )}
+            </div>
+          ))}
         </div>
       </div>
-    </div>
-  );
-}
 
-/**
- * Single message bubble with a brand-themed style.
- */
-function MessageBubble({ sender, text }) {
-  const isUser = sender === 'You';
+      {/* Main Chat Area */}
+      <div className="flex-grow flex flex-col">
+        {/* Header */}
+        <div className="bg-gradient-to-r from-[#4B8795] to-[#407986] p-4 text-white">
+          <h2 className="text-xl font-bold">Chat with Thesys AI</h2>
+          <p className="text-sm opacity-80">Ask questions, explore ideas, or just say hello.</p>
+        </div>
 
-  return (
-    <div className={`my-2 flex ${isUser ? 'justify-end' : 'justify-start'}`}>
-      <div
-        className={`max-w-[70%] p-2 rounded-lg shadow-sm ${
-          isUser ? 'bg-[#4B8795] text-white' : 'bg-white border'
-        }`}
-      >
-        <span className="block text-xs font-bold mb-1">{sender}</span>
-        <span className="text-sm leading-snug whitespace-pre-wrap">{text}</span>
+        {/* Chat Messages Container */}
+        <div 
+          ref={chatContainerRef}
+          className="flex-grow overflow-y-auto p-4 space-y-2"
+        >
+          {activeHistory.map((msg, idx) => (
+            <MessageBubble 
+              key={idx} 
+              sender={msg.sender} 
+              text={msg.text} 
+            />
+          ))}
+          
+          {isTyping && (
+            <div className="text-gray-500 italic p-2">
+              Thesys is typing...
+            </div>
+          )}
+        </div>
+
+        {/* Message Input */}
+        <div className="bg-white p-4 border-t flex items-center space-x-2">
+          <textarea
+            ref={messageInputRef}
+            value={message}
+            onChange={(e) => setMessage(e.target.value)}
+            onKeyDown={handleKeyPress}
+            placeholder="Type your message..."
+            className="flex-grow p-2 border rounded resize-none"
+            rows={1}
+          />
+          <button 
+            onClick={sendMessage} 
+            disabled={!message.trim()}
+            className="bg-[#4B8795] text-white px-4 py-2 rounded hover:bg-[#407986] disabled:opacity-50 transition"
+          >
+            Send
+          </button>
+        </div>
       </div>
     </div>
   );

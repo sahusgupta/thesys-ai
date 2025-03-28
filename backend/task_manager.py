@@ -1,9 +1,12 @@
 from typing import List, Dict, Any
-from agents.agent import ScholarAgent, FactCheckAgent, ContextAgent, CitationAgent
-from agent_communication import AgentCommunicationProtocol
-from search_discovery import AgentDiscoveryService
-from vector_storage import VectorKnowledgeBase
-from fetchai_agent_connector import FetchaiAgentConnector
+from agents.citation_agent.agent import CitationAgent
+from agents.context_agent.agent import ContextAgent
+from agents.factcheck_agent.agent import FactCheckAgent
+from agents.scholar_agent.agent import ScholarAgent
+from backend.agent_communication import AgentCommunicationProtocol
+from backend.search_discovery import AgentDiscoveryService
+from backend.vector_storage import VectorKnowledgeBase
+from backend.fetchai_agent_connector import FetchaiAgentConnector
 
 class ThesysOrchestrator:
     def __init__(self, agents: List[Any], agentverse_client=None):
