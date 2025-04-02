@@ -9,7 +9,7 @@ const Navbar = () => (
       <img src={logo} alt="Thesys AI Logo" className="h-10 invert" />
     </Link>
     <div className="flex">
-      {['Dashboard', 'Settings'].map((item) => (
+      {['Dashboard', 'Settings', sessionStorage.getItem("loggedin") != null ? "Logout" : "Login"].map((item) => (
         <Link 
           key={item} 
           to={`/${item.toLowerCase()}`} 

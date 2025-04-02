@@ -11,7 +11,8 @@ import Chat from './pages/Chat';
 import Citations from './pages/Citations';
 import Library from './pages/Library';
 import Settings from './pages/Settings';
-
+import Login from './pages/Login';
+import SignUp from './pages/SignUp';
 function App() {
   return (
     <BrowserRouter>
@@ -27,6 +28,8 @@ function App() {
             <Route path="/citations" element={<Citations />} />
             <Route path="/library" element={<Library />} />
             <Route path="/settings" element={<Settings />} />
+            <Route path="/login" element={<Login />} />
+            <Route path="/signup" element={<SignUp />} />
         </Routes>
       </main>
       </div>
