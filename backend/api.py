@@ -11,6 +11,7 @@ from agents.scholar_agent.agent import ScholarAgent
 from agents.factcheck_agent.agent import FactCheckAgent
 from agents.citation_agent.agent import CitationAgent
 from agents.context_agent.agent import ContextAgent
+from agents.scholar_agent.agent import ScholarAgent
 
 app = Flask(__name__)
 CORS(app)
@@ -167,6 +168,49 @@ def get_chat_history(chat_id):
         'chatId': chat_id,
         'messages': session['messages']
     })
+
+@app.route('/api/papers/search', methods=['POST'])
+def search_papers():
+    try:
+        data = request.get_json()
+        query = data.get('query')
+        limit = data.get('limit', 10)
+        offset = data.get('offset', 0)
+        
+        if not query:
+            return jsonify({
+                'status': 'error',
+                'message': 'Query parameter is required'
+            }), 400
+            
+        result = chat_manager.scholar_agent.search_papers(query, limit, offset)
+        
+        if result['status'] == 'error':
+            return jsonify(result), 500
+            
+        return jsonify(result)
+        
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
+
+@app.route('/api/papers/<paper_id>', methods=['GET'])
+def get_paper_details(paper_id):
+    try:
+        result = chat_manager.scholar_agent.get_paper_details(paper_id)
+        
+        if result['status'] == 'error':
+            return jsonify(result), 500
+            
+        return jsonify(result)
+        
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
 
 if __name__ == '__main__':
     # This ensures the app runs with debug on port 5000 

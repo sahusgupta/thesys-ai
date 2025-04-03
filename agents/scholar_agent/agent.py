@@ -1,93 +1,111 @@
-# agents/scholar_agent/agent.py
-from typing import Dict, Any
-from crossref.restful import Works
-from models.summarization import generate_summary
+from typing import List, Dict, Any
+import requests
+from datetime import datetime
+import json
 
 class ScholarAgent:
-    """
-    The ScholarAgent handles searching external academic databases (CrossRef) 
-    and optionally summarizing the found results to return 'summary' + 'sources'.
-    """
     def __init__(self):
-        self.works_api = Works()
+        self.base_url = "https://api.semanticscholar.org/graph/v1"
+        self.headers = {
+            "Accept": "application/json"
+        }
 
-    def process_query(self, query: str) -> Dict[str, Any]:
+    def search_papers(self, query: str, limit: int = 10, offset: int = 0) -> Dict[str, Any]:
         """
-        Called by the orchestrator or other code to search CrossRef using 'query'
-        and produce a short summary of top results plus a 'sources' list.
+        Search for academic papers using the Semantic Scholar API
         """
         try:
-            # Search Crossref for up to 3 papers
-            search_results = self.works_api.query(query).sort("relevance").rows(3)
-            papers = list(search_results)
-
-            if not papers:
-                return {
-                    "summary": f"No papers found for '{query}'.",
-                    "sources": [],
-                    "error": None
-                }
-
-            # Combine text from top results
-            combined_text = ""
-            sources_list = []
-            for paper in papers:
-                title_list = paper.get("title", ["Unknown title"])
-                title = "; ".join(title_list)
-                abstract = paper.get("abstract", "")
-                authors = paper.get("author", [])
-                author_str = ", ".join([
-                    f"{auth.get('given', '')} {auth.get('family', '')}".strip()
-                    for auth in authors
-                ]) or "Unknown Authors"
-
-                snippet = f"Title: {title}\nAuthors: {author_str}\nAbstract: {abstract}\n"
-                combined_text += snippet + "\n"
-
-                # For 'sources'
-                year = "UnknownYear"
-                published = paper.get("published-print") or paper.get("published-online")
-                if published:
-                    date_parts = published.get("date-parts", [[]])[0]
-                    if date_parts:
-                        year = str(date_parts[0])
-                sources_list.append(f"{title} ({year}), by {author_str}")
-
-            # Summarize with your summarization logic
-            summary_data = generate_summary(
-                text=combined_text,
-                prompt="Crossref Papers",
-                discipline="Academic Searching"
-            )
-            if "Error" in summary_data:
-                summary_text = f"Could not summarize: {summary_data['Error']}"
-            else:
-                summary_text = "\n".join([
-                    f"{k}: {v}" for k, v in summary_data.items()
-                ])
-
-            return {
-                "summary": summary_text.strip(),
-                "sources": sources_list,
-                "error": None
+            # Construct the search URL
+            search_url = f"{self.base_url}/paper/search"
+            
+            # Set up query parameters
+            params = {
+                "query": query,
+                "limit": limit,
+                "offset": offset,
+                "fields": "paperId,title,abstract,authors,year,venue,citationCount,url"
             }
-
+            
+            # Make the API request
+            response = requests.get(search_url, headers=self.headers, params=params)
+            response.raise_for_status()
+            
+            # Parse the response
+            data = response.json()
+            
+            # Process and format the results
+            papers = []
+            for paper in data.get("data", []):
+                processed_paper = {
+                    "id": paper.get("paperId"),
+                    "title": paper.get("title"),
+                    "abstract": paper.get("abstract"),
+                    "authors": [author.get("name") for author in paper.get("authors", [])],
+                    "year": paper.get("year"),
+                    "venue": paper.get("venue"),
+                    "citations": paper.get("citationCount"),
+                    "url": paper.get("url"),
+                    "timestamp": datetime.now().isoformat()
+                }
+                papers.append(processed_paper)
+            
+            return {
+                "status": "success",
+                "papers": papers,
+                "total": data.get("total", 0),
+                "offset": offset,
+                "limit": limit
+            }
+            
+        except requests.exceptions.RequestException as e:
+            return {
+                "status": "error",
+                "message": f"API request failed: {str(e)}"
+            }
         except Exception as e:
             return {
-                "summary": "",
-                "sources": [],
-                "error": str(e)
+                "status": "error",
+                "message": f"An error occurred: {str(e)}"
             }
 
-    def process_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
+    def get_paper_details(self, paper_id: str) -> Dict[str, Any]:
         """
-        Called by AgentCommunicationProtocol when this agent receives a message dict.
-        Usually includes 'sender', 'content', etc. 
-        We'll look for content['text'] to pass to process_query.
+        Get detailed information about a specific paper
         """
-        user_text = message["content"].get("text", "")
-        result = self.process_query(user_text)
-        return {
-            "message_id": message["id"],
-            "result": result
-        }
+        try:
+            url = f"{self.base_url}/paper/{paper_id}"
+            params = {
+                "fields": "paperId,title,abstract,authors,year,venue,citationCount,url,references,citations"
+            }
+            
+            response = requests.get(url, headers=self.headers, params=params)
+            response.raise_for_status()
+            
+            paper = response.json()
+            
+            return {
+                "status": "success",
+                "paper": {
+                    "id": paper.get("paperId"),
+                    "title": paper.get("title"),
+                    "abstract": paper.get("abstract"),
+                    "authors": [author.get("name") for author in paper.get("authors", [])],
+                    "year": paper.get("year"),
+                    "venue": paper.get("venue"),
+                    "citations": paper.get("citationCount"),
+                    "url": paper.get("url"),
+                    "references": paper.get("references", []),
+                    "cited_by": paper.get("citations", [])
+                }
+            }
+            
+        except requests.exceptions.RequestException as e:
+            return {
+                "status": "error",
+                "message": f"API request failed: {str(e)}"
+            }
+        except Exception as e:
+            return {
+                "status": "error",
+                "message": f"An error occurred: {str(e)}"
+            } 
