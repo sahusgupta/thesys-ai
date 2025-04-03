@@ -12,6 +12,7 @@ from agents.factcheck_agent.agent import FactCheckAgent
 from agents.citation_agent.agent import CitationAgent
 from agents.context_agent.agent import ContextAgent """
 from agents.scholar_agent.agent import ScholarAgent
+from backend.paper_repository import PaperRepository
 
 app = Flask(__name__)
 CORS(app)
@@ -49,6 +50,9 @@ class ChatManager:
 
         # Store chat sessions if you want to track history
         self.chat_sessions = {}
+
+        # Initialize paper repository
+        self.paper_repository = PaperRepository()
 
     def process_chat_message(self, message: str, chat_id: str):
         """
@@ -170,7 +174,7 @@ def get_chat_history(chat_id):
     })
 
 @app.route('/api/papers/search', methods=['POST'])
-def search_papers():
+async def search_papers():
     try:
         data = request.get_json()
         query = data.get('query')
@@ -183,11 +187,7 @@ def search_papers():
                 'message': 'Query parameter is required'
             }), 400
             
-        result = chat_manager.scholar_agent.search_papers(query, limit, offset)
-        
-        if result['status'] == 'error':
-            return jsonify(result), 500
-            
+        result = await chat_manager.scholar_agent.search_papers(query, limit, offset)
         return jsonify(result)
         
     except Exception as e:
@@ -197,14 +197,30 @@ def search_papers():
         }), 500
 
 @app.route('/api/papers/<paper_id>', methods=['GET'])
-def get_paper_details(paper_id):
+async def get_paper_details(paper_id):
     try:
-        result = chat_manager.scholar_agent.get_paper_details(paper_id)
-        
-        if result['status'] == 'error':
-            return jsonify(result), 500
-            
+        result = await chat_manager.scholar_agent.get_paper_details(paper_id)
         return jsonify(result)
+        
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
+
+@app.route('/api/papers/<paper_id>/pdf', methods=['GET'])
+def get_paper_pdf(paper_id):
+    try:
+        url = chat_manager.paper_repository.get_paper_url(paper_id)
+        if url:
+            return jsonify({
+                'status': 'success',
+                'url': url
+            })
+        return jsonify({
+            'status': 'error',
+            'message': 'PDF not found'
+        }), 404
         
     except Exception as e:
         return jsonify({

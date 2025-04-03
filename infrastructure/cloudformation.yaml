@@ -1,0 +1,129 @@
+AWSTemplateFormatVersion: '2010-09-01'
+Description: 'Thesys AI Infrastructure'
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, prod]
+  
+  DBPassword:
+    Type: String
+    NoEcho: true
+    MinLength: 8
+
+Resources:
+  # S3 Bucket for Paper Storage
+  PapersBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub ${AWS::StackName}-papers-${Environment}
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  # VPC for RDS and OpenSearch
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-vpc
+
+  # RDS PostgreSQL Instance
+  DatabaseInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBName: thesys
+      Engine: postgres
+      EngineVersion: 13.7
+      DBInstanceIdentifier: !Sub ${AWS::StackName}-db-${Environment}
+      DBInstanceClass: !If [IsProd, db.t3.small, db.t3.micro]
+      AllocatedStorage: !If [IsProd, 20, 10]
+      MasterUsername: thesys_admin
+      MasterUserPassword: !Ref DBPassword
+      VPCSecurityGroups:
+        - !Ref DatabaseSecurityGroup
+      BackupRetentionPeriod: !If [IsProd, 7, 1]
+      MultiAZ: !If [IsProd, true, false]
+
+  # OpenSearch Domain
+  SearchDomain:
+    Type: AWS::OpenSearchService::Domain
+    Properties:
+      DomainName: !Sub ${AWS::StackName}-search-${Environment}
+      EngineVersion: OpenSearch_1.3
+      ClusterConfig:
+        InstanceType: !If [IsProd, t3.small.search, t3.micro.search]
+        InstanceCount: !If [IsProd, 2, 1]
+      EBSOptions:
+        EBSEnabled: true
+        VolumeSize: !If [IsProd, 20, 10]
+        VolumeType: gp3
+      EncryptionAtRestOptions:
+        Enabled: true
+      NodeToNodeEncryptionOptions:
+        Enabled: true
+      DomainEndpointOptions:
+        EnforceHTTPS: true
+      AdvancedSecurityOptions:
+        Enabled: true
+        MasterUserOptions:
+          MasterUserName: admin
+          MasterUserPassword: !Ref DBPassword
+
+  # IAM Role for Application
+  ApplicationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess
+      Policies:
+        - PolicyName: ThesysApplicationPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:DeleteObject
+                Resource: !Sub ${PapersBucket.Arn}/*
+              - Effect: Allow
+                Action:
+                  - es:ESHttp*
+                Resource: !Sub ${SearchDomain.Arn}/*
+
+Conditions:
+  IsProd: !Equals [!Ref Environment, prod]
+
+Outputs:
+  BucketName:
+    Description: Name of the S3 bucket
+    Value: !Ref PapersBucket
+
+  DatabaseEndpoint:
+    Description: Connection endpoint for the database
+    Value: !GetAtt DatabaseInstance.Endpoint.Address
+
+  SearchDomainEndpoint:
+    Description: Endpoint for the OpenSearch domain
+    Value: !GetAtt SearchDomain.DomainEndpoint 

@@ -3,6 +3,9 @@ import requests
 from datetime import datetime
 import logging
 import json
+import arxiv
+import time
+from backend.paper_repository import PaperRepository
 
 class ScholarAgent:
     def __init__(self, api_key=None):
@@ -13,6 +16,9 @@ class ScholarAgent:
         if api_key:
             self.headers["x-api-key"] = api_key
             
+        # Initialize paper repository
+        self.paper_repository = PaperRepository()
+        
         # Configure logging
         logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
         self.logger = logging.getLogger(__name__)
@@ -20,6 +26,13 @@ class ScholarAgent:
         # Rate limiting parameters
         self.max_retries = 3
         self.retry_delay = 1  # Initial delay in seconds
+        
+        # ArXiv API client
+        self.arxiv_client = arxiv.Client(
+            page_size=10,
+            delay_seconds=3.0,
+            num_retries=3
+        )
     
     def _make_request_with_backoff(self, url, params=None):
         """Helper method to make API requests with exponential backoff"""
@@ -32,13 +45,10 @@ class ScholarAgent:
                 if response.status_code == 200:
                     return response
                 
-                # If rate limited, implement backoff
+                # If rate limited, try ArXiv instead
                 if response.status_code == 429:
-                    wait_time = self.retry_delay * (2 ** retries)
-                    self.logger.warning(f"Rate limited. Waiting {wait_time} seconds before retry.")
-                    time.sleep(wait_time)
-                    retries += 1
-                    continue
+                    self.logger.warning("Rate limited by Semantic Scholar. Falling back to ArXiv API.")
+                    return None
                 
                 # For other errors, raise the exception
                 response.raise_for_status()
@@ -53,107 +63,120 @@ class ScholarAgent:
         
         raise requests.exceptions.RequestException(f"Max retries ({self.max_retries}) exceeded")
 
-    def search_papers(self, query: str, limit: int = 10, offset: int = 0) -> Dict[str, Any]:
-        """
-        Search for academic papers using the Semantic Scholar API
-        """
+    def _search_arxiv(self, query: str, limit: int = 10) -> List[Dict[str, Any]]:
+        """Search papers using ArXiv API"""
         try:
-            # Construct the search URL
-            search_url = f"{self.base_url}/paper/search"
+            search = arxiv.Search(
+                query=query,
+                max_results=limit,
+                sort_by=arxiv.SortCriterion.Relevance
+            )
             
-            # Set up query parameters
-            params = {
-                "query": query,
-                "limit": limit,
-                "offset": offset,
-                "fields": "title,abstract,authors,year,venue,citationCount,url"
-            }
-            
-            # Make the API request with backoff
-            self.logger.info(f"Searching for papers with query: {query}")
-            response = self._make_request_with_backoff(search_url, params=params)
-            
-            # Parse the response
-            data = response.json()
-            
-            # Process and format the results
             papers = []
-            for paper in data.get("data", []):
-                processed_paper = {
-                    "id": paper.get("paperId"),
-                    "title": paper.get("title"),
-                    "abstract": paper.get("abstract"),
-                    "authors": [author.get("name") for author in paper.get("authors", [])],
-                    "year": paper.get("year"),
-                    "venue": paper.get("venue"),
-                    "citations": paper.get("citationCount"),
-                    "url": paper.get("url"),
+            for result in self.arxiv_client.results(search):
+                paper = {
+                    "id": result.entry_id,
+                    "title": result.title,
+                    "abstract": result.summary,
+                    "authors": [author.name for author in result.authors],
+                    "year": result.published.year,
+                    "venue": "arXiv",
+                    "citations": None,  # ArXiv doesn't provide citation counts
+                    "url": result.pdf_url,
                     "timestamp": datetime.now().isoformat()
                 }
-                papers.append(processed_paper)
+                papers.append(paper)
             
-            self.logger.info(f"Found {len(papers)} papers")
-            return {
-                "status": "success",
-                "papers": papers,
-                "total": data.get("total", 0),
-                "offset": offset,
-                "limit": limit
-            }
+            return papers
             
-        except requests.exceptions.RequestException as e:
-            self.logger.error(f"API request failed: {str(e)}")
-            return {
-                "status": "error",
-                "message": f"API request failed: {str(e)}"
-            }
         except Exception as e:
-            self.logger.error(f"An error occurred: {str(e)}")
+            self.logger.error(f"ArXiv API error: {str(e)}")
+            return []
+
+    async def search_papers(self, query: str, limit: int = 10, offset: int = 0) -> Dict[str, Any]:
+        """Search papers using OpenSearch and fall back to Semantic Scholar if needed"""
+        try:
+            # First try OpenSearch
+            search_results = self.paper_repository.search_client.search(
+                index="papers",
+                body={
+                    "query": {
+                        "multi_match": {
+                            "query": query,
+                            "fields": ["title^3", "abstract^2", "content"]
+                        }
+                    },
+                    "size": limit,
+                    "from": offset
+                }
+            )
+            
+            papers = []
+            for hit in search_results['hits']['hits']:
+                paper_data = hit['_source']
+                papers.append({
+                    'id': hit['_id'],
+                    'title': paper_data['title'],
+                    'abstract': paper_data['abstract'],
+                    'authors': paper_data['authors'],
+                    'year': paper_data['year'],
+                    'venue': paper_data['venue'],
+                    'score': hit['_score']
+                })
+            
+            if papers:
+                return {
+                    'status': 'success',
+                    'papers': papers,
+                    'total': search_results['hits']['total']['value']
+                }
+            
+            # If no results, fall back to Semantic Scholar API
+            return await self._search_semantic_scholar(query, limit, offset)
+            
+        except Exception as e:
+            self.logger.error(f"Search error: {str(e)}")
             return {
-                "status": "error",
-                "message": f"An error occurred: {str(e)}"
+                'status': 'error',
+                'message': str(e)
             }
 
-    def get_paper_details(self, paper_id: str) -> Dict[str, Any]:
-        """
-        Get detailed information about a specific paper
-        """
+    async def get_paper_details(self, paper_id: str) -> Dict[str, Any]:
+        """Get paper details from local storage or Semantic Scholar"""
         try:
-            url = f"{self.base_url}/paper/{paper_id}"
-            params = {
-                "fields": "paperId,title,abstract,authors,year,venue,citationCount,url,references,citations"
-            }
+            # First check local database
+            with self.paper_repository.db.cursor() as cur:
+                cur.execute("""
+                    SELECT id, title, authors, year, venue, abstract, s3_key
+                    FROM papers WHERE id = %s
+                """, (paper_id,))
+                result = cur.fetchone()
+                
+                if result:
+                    # Generate presigned URL for PDF if available
+                    pdf_url = None
+                    if result[6]:  # s3_key
+                        pdf_url = self.paper_repository.get_paper_url(paper_id)
+                    
+                    return {
+                        'status': 'success',
+                        'paper': {
+                            'id': result[0],
+                            'title': result[1],
+                            'authors': result[2],
+                            'year': result[3],
+                            'venue': result[4],
+                            'abstract': result[5],
+                            'pdf_url': pdf_url
+                        }
+                    }
             
-            self.logger.info(f"Getting details for paper ID: {paper_id}")
-            response = self._make_request_with_backoff(url, params=params)
+            # If not found locally, fetch from Semantic Scholar
+            return await self._fetch_semantic_scholar_paper(paper_id)
             
-            paper = response.json()
-            
-            return {
-                "status": "success",
-                "paper": {
-                    "id": paper.get("paperId"),
-                    "title": paper.get("title"),
-                    "abstract": paper.get("abstract"),
-                    "authors": [author.get("name") for author in paper.get("authors", [])],
-                    "year": paper.get("year"),
-                    "venue": paper.get("venue"),
-                    "citations": paper.get("citationCount"),
-                    "url": paper.get("url"),
-                    "references": paper.get("references", []),
-                    "cited_by": paper.get("citations", [])
-                }
-            }
-            
-        except requests.exceptions.RequestException as e:
-            self.logger.error(f"API request failed: {str(e)}")
-            return {
-                "status": "error",
-                "message": f"API request failed: {str(e)}"
-            }
         except Exception as e:
-            self.logger.error(f"An error occurred: {str(e)}")
+            self.logger.error(f"Error fetching paper details: {str(e)}")
             return {
-                "status": "error",
-                "message": f"An error occurred: {str(e)}"
+                'status': 'error',
+                'message': str(e)
             }

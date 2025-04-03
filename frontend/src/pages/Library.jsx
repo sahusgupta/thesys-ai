@@ -24,38 +24,50 @@ export default function Search() {
   };
 
   return (
-    <div className="bg-white min-h-screen text-gray-900 p-6">
-      <h1 className="text-3xl font-bold mb-4">AI Search</h1>
-      <p className="text-gray-700 text-sm mb-4">
-        Look for relevant documents and citations within your library.
-      </p>
-
-      <form onSubmit={handleSearch} className="flex gap-2 mb-4">
-        <input
-          type="text"
-          placeholder="Enter a query..."
-          className="flex-grow border border-gray-300 rounded px-2 py-1 text-sm"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-        />
-        <button
-          type="submit"
-          className="bg-[#4B8795] text-white text-sm px-4 py-2 rounded hover:bg-[#407986] transition"
+    <div className="min-h-screen flex bg-gray-50 text-gray-900">
+      <div className="flex-1 p-4 md:p-6">
+        {/* Gradient Banner */}
+        <div
+          className="rounded-md p-4 mb-6 text-gray-800 shadow-sm relative overflow-hidden"
+          style={{
+            background: 'linear-gradient(120deg, #f0f9ff 0%, #e0f4f8 35%, #ffffff 100%)',
+          }}
         >
-          Search
-        </button>
-      </form>
-
-      <div className="grid gap-3">
-        {results.map((res) => (
-          <div key={res.id} className="p-3 border rounded hover:shadow-sm transition">
-            <h2 className="font-semibold text-gray-800 text-sm">{res.title}</h2>
-            <p className="text-xs text-gray-600">{res.snippet}</p>
+          <div className="relative">
+            <h1 className="text-2xl font-bold mb-2">📚 Research Library</h1>
+            <p className="text-sm text-gray-700">
+              Look for relevant documents and citations within your library.
+            </p>
           </div>
-        ))}
-        {!results.length && query && (
-          <p className="text-gray-500 text-sm">No results found.</p>
-        )}
+        </div>
+
+        <form onSubmit={handleSearch} className="flex gap-2 mb-6">
+          <input
+            type="text"
+            placeholder="Search your library..."
+            className="flex-grow border border-gray-300 rounded-lg p-3 focus:ring-[#4B8795] focus:border-[#4B8795]"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+          <button
+            type="submit"
+            className="bg-[#4B8795] text-white px-6 py-2 rounded-lg hover:bg-[#407986] transition"
+          >
+            Search
+          </button>
+        </form>
+
+        <div className="grid gap-4">
+          {results.map((res) => (
+            <div key={res.id} className="bg-white p-4 rounded-lg border hover:shadow-md transition">
+              <h2 className="font-semibold text-[#4B8795]">{res.title}</h2>
+              <p className="text-sm text-gray-600 mt-1">{res.snippet}</p>
+            </div>
+          ))}
+          {!results.length && query && (
+            <div className="text-center text-gray-500 py-8">No results found.</div>
+          )}
+        </div>
       </div>
     </div>
   );

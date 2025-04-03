@@ -22,38 +22,52 @@ function Search() {
   };
 
   return (
-    <div className="min-h-screen p-8 bg-white">
-      <h1 className="text-4xl font-bold mb-6 text-gray-800">AI Search</h1>
-      <p className="mb-4 text-gray-700">
-        Search your documents and citations using powerful AI indexing.
-      </p>
-
-      <form onSubmit={handleSearch} className="flex gap-2 mb-6">
-        <input
-          type="text"
-          className="border border-gray-300 rounded-lg p-2 flex-grow"
-          placeholder="Enter your search query..."
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-        />
-        <button
-          type="submit"
-          className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition"
+    <div className="min-h-screen flex bg-gray-50 text-gray-900">
+      <div className="flex-1 p-4 md:p-6">
+        {/* Gradient Banner */}
+        <div
+          className="rounded-md p-4 mb-6 text-gray-800 shadow-sm relative overflow-hidden"
+          style={{
+            background: 'linear-gradient(120deg, #f0f9ff 0%, #e0f4f8 35%, #ffffff 100%)',
+          }}
         >
-          Search
-        </button>
-      </form>
-
-      <div className="grid gap-4">
-        {results.map((res) => (
-          <div key={res.id} className="bg-gray-50 p-4 rounded-lg shadow hover:shadow-md">
-            <h2 className="text-xl font-semibold text-gray-800">{res.title}</h2>
-            <p className="text-gray-600 text-sm">{res.snippet}</p>
+          <div className="relative">
+            <h1 className="text-2xl font-bold mb-2">🔍 AI Search</h1>
+            <p className="text-sm text-gray-700">
+              Search your documents and citations using powerful AI indexing.
+            </p>
           </div>
-        ))}
-        {results.length === 0 && (
-          <p className="text-gray-500">No results found. Try refining your query.</p>
-        )}
+        </div>
+
+        <form onSubmit={handleSearch} className="flex gap-2 mb-6">
+          <input
+            type="text"
+            className="flex-grow border border-gray-300 rounded-lg p-3 focus:ring-[#4B8795] focus:border-[#4B8795]"
+            placeholder="Enter your search query..."
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+          <button
+            type="submit"
+            className="bg-[#4B8795] text-white px-6 py-2 rounded-lg hover:bg-[#407986] transition"
+          >
+            Search
+          </button>
+        </form>
+
+        <div className="grid gap-4">
+          {results.map((res) => (
+            <div key={res.id} className="bg-white p-4 rounded-lg border hover:shadow-md transition">
+              <h2 className="font-semibold text-[#4B8795]">{res.title}</h2>
+              <p className="text-sm text-gray-600 mt-1">{res.snippet}</p>
+            </div>
+          ))}
+          {results.length === 0 && (
+            <div className="text-center text-gray-500 py-8">
+              No results found. Try refining your query.
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
