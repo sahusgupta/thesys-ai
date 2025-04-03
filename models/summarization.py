@@ -4,11 +4,11 @@ import nltk
 import re
 from typing import Union, List
 import yake
-
+from utils.config import Config
 # Load OpenAI API key
 client = oa.Client()
 # Strip any whitespace or newline characters from the API key
-api_key = os.getenv('OPENAI_API_KEY')
+api_key = Config.OPENAI_API_KEY
 if api_key:
     api_key = api_key.strip()
 client.api_key = api_key

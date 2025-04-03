@@ -7,13 +7,13 @@ from backend.agent_communication import AgentCommunicationProtocol
 from backend.search_discovery import AgentDiscoveryService
 from backend.vector_storage import VectorKnowledgeBase
 from backend.fetchai_agent_connector import FetchaiAgentConnector
-
+from utils.config import Config
 class ThesysOrchestrator:
     def __init__(self, agents: List[Any], agentverse_client=None):
         self.agents = {type(agent).__name__: agent for agent in agents}
         self.communication_protocol = AgentCommunicationProtocol(agents)
         self.discovery_service = AgentDiscoveryService(agentverse_client)
-        self.knowledge_base = VectorKnowledgeBase()
+        self.knowledge_base = VectorKnowledgeBase(pinecone_api_key = Config.PINECONE_API_KEY)
         self.agent_connector = FetchaiAgentConnector()
         self.workflow_cache = {}
 
@@ -64,6 +64,7 @@ class ThesysOrchestrator:
         return validated_results
 
     def _generate_final_report(self, synthesized_data: Dict[str, Any]) -> Dict[str, Any]:
+        print("DEBUG: synthesized data:", synthesized_data)
         report = {
             'summary': '',
             'citations': [],

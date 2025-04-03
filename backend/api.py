@@ -1,147 +1,149 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import uuid
+
+# Import your orchestrator & ACP
 from backend.task_manager import ThesysOrchestrator
+from backend.agent_communication import AgentCommunicationProtocol
+
+# Import your agents
+from agents.scholar_agent.agent import ScholarAgent
+from agents.factcheck_agent.agent import FactCheckAgent
 from agents.citation_agent.agent import CitationAgent
 from agents.context_agent.agent import ContextAgent
-from agents.factcheck_agent.agent import FactCheckAgent
-from agents.scholar_agent.agent import ScholarAgent
+
+app = Flask(__name__)
+CORS(app)
 
 class ChatManager:
+    """
+    ChatManager glues everything together:
+     - The ThesysOrchestrator for single-step queries (like /api/chat).
+     - The AgentCommunicationProtocol for advanced multi-agent messaging (like /api/advanced_workflow).
+     - Storing chat sessions if needed.
+    """
+
     def __init__(self):
-        # Initialize agents
+        # Agents for orchestrator usage
         self.scholar_agent = ScholarAgent()
         self.fact_check_agent = FactCheckAgent()
-        self.context_agent = ContextAgent()
         self.citation_agent = CitationAgent()
+        self.context_agent = ContextAgent()
 
-        # Initialize orchestrator with agents
+        # Initialize orchestrator with these agents
         self.orchestrator = ThesysOrchestrator([
-            self.scholar_agent, 
-            self.fact_check_agent, 
-            self.context_agent, 
+            self.scholar_agent,
+            self.fact_check_agent,
+            self.context_agent,
             self.citation_agent
         ])
 
-        # Store chat sessions
+        # ACP for advanced messaging
+        self.agent_protocol = AgentCommunicationProtocol([
+            self.scholar_agent,
+            self.fact_check_agent,
+            self.citation_agent,
+            self.context_agent
+        ])
+
+        # Store chat sessions if you want to track history
         self.chat_sessions = {}
 
-    def process_chat_message(self, message, chat_id):
+    def process_chat_message(self, message: str, chat_id: str):
         """
-        Process a chat message using the Thesys research workflow
-        
-        Args:
-            message (str): User's input message
-            chat_id (str): Unique identifier for the chat session
-        
-        Returns:
-            dict: Response from the orchestrator
+        Called by /api/chat for single-step usage:
+         1) We pass 'message' to orchestrator.execute_research_workflow
+         2) Or we handle minimal logic to store in chat_sessions
         """
-        # Create a new chat session if it doesn't exist
         if chat_id not in self.chat_sessions:
             self.chat_sessions[chat_id] = {
-                'messages': [],
-                'context': {}
+                'messages': []
             }
 
-        # Add current message to session history
+        # store user message
         self.chat_sessions[chat_id]['messages'].append({
             'role': 'user',
             'content': message
         })
 
-        # Use orchestrator to generate a research-based response
-        try:
-            research_results = self.orchestrator.execute_research_workflow(message)
-            
-            # Generate a response based on research results
-            response = self._generate_response(research_results)
+        # call orchestrator
+        final_report = self.orchestrator.execute_research_workflow(message)
+        # final_report example:
+        # {
+        #   'summary': '...',
+        #   'citations': [...],
+        #   'sources': [...]
+        # }
 
-            # Add AI response to session history
-            self.chat_sessions[chat_id]['messages'].append({
-                'role': 'assistant',
-                'content': response
-            })
+        # store orchestrator result as an 'assistant' message
+        self.chat_sessions[chat_id]['messages'].append({
+            'role': 'assistant',
+            'content': final_report
+        })
 
-            return response
+        # Return final_report as a simple user-facing response
+        return final_report
 
-        except Exception as e:
-            # Fallback response in case of errors
-            return f"I apologize, but I encountered an error processing your request: {str(e)}"
-
-    def _generate_response(self, research_results):
+    def run_advanced_flow(self, user_message: str):
         """
-        Generate a human-readable response from research results
-        
-        Args:
-            research_results (dict): Results from research workflow
-        
-        Returns:
-            str: Formatted response
+        Called by /api/advanced_workflow for multi-step usage with the ACP.
+        AgentCommunicationProtocol -> run_advanced_messaging_workflow
         """
-        # Basic response generation logic
-        summary = research_results.get('summary', 'I couldn\'t find specific information about your query.')
-        citations = research_results.get('citations', [])
-        sources = research_results.get('sources', [])
+        final_data = self.agent_protocol.run_advanced_messaging_workflow(user_message)
+        return final_data
 
-        # Construct a more detailed response
-        response = summary
-
-        # Append citations if available
-        if citations:
-            response += "\n\nRelevant Citations:"
-            for citation in citations[:3]:  # Limit to top 3 citations
-                response += f"\n- {citation}"
-
-        # Append sources if available
-        if sources:
-            response += "\n\nSources:"
-            for source in sources[:3]:  # Limit to top 3 sources
-                response += f"\n- {source}"
-
-        return response
-
-# Flask Application Setup
-app = Flask(__name__)
-CORS(app)  # Enable CORS for all routes
-
-# Initialize chat manager
+# -----------------------------
+# Create global chat_manager
+# -----------------------------
 chat_manager = ChatManager()
 
 @app.route('/api/chat', methods=['POST'])
 def handle_chat():
     """
-    Endpoint for processing chat messages
-    
-    Expected JSON payload:
-    {
-        'message': str,  # User's message
-        'chatId': str    # Unique chat session ID
-    }
+    Single-step usage: 
+    1) Takes user's 'message'
+    2) chat_id is optional in the request
+    3) calls chat_manager.process_chat_message => orchestrator
+    4) returns final orchestrator result
     """
     data = request.json
-    
-    # Validate input
     if not data or 'message' not in data:
-        return jsonify({'error': 'Invalid request, message is required'}), 400
-    
-    # Use a default chat ID if not provided
+        return jsonify({'error': 'Invalid request, "message" is required'}), 400
+
     chat_id = data.get('chatId', str(uuid.uuid4()))
-    message = data['message']
+    message_text = data['message']
 
     try:
-        # Process the message
-        response = chat_manager.process_chat_message(message, chat_id)
-        
+        response_data = chat_manager.process_chat_message(message_text, chat_id)
         return jsonify({
-            'response': response,
+            'message': response_data,
             'chatId': chat_id
         })
-
     except Exception as e:
         return jsonify({
-            'error': f'An error occurred: {str(e)}',
+            'error': f'Error handling chat: {str(e)}',
             'chatId': chat_id
+        }), 500
+
+@app.route('/api/advanced_workflow', methods=['POST'])
+def advanced_workflow():
+    """
+    Multi-step usage with advanced agent messaging flow:
+    1) user sends "message"
+    2) we call chat_manager.run_advanced_flow
+    3) returns final aggregated multi-agent result
+    """
+    data = request.json
+    if not data or 'message' not in data:
+        return jsonify({'error': 'Invalid request, "message" is required'}), 400
+
+    user_message = data['message']
+    try:
+        final_data = chat_manager.run_advanced_flow(user_message)
+        return jsonify(final_data)
+    except Exception as e:
+        return jsonify({
+            'error': str(e)
         }), 500
 
 @app.route('/api/chats', methods=['GET'])
@@ -161,11 +163,12 @@ def get_chat_history(chat_id):
     session = chat_manager.chat_sessions.get(chat_id)
     if not session:
         return jsonify({'error': 'Chat session not found'}), 404
-    
     return jsonify({
         'chatId': chat_id,
         'messages': session['messages']
     })
 
 if __name__ == '__main__':
+    # This ensures the app runs with debug on port 5000 
+    # or whatever you like
     app.run(debug=True, port=5000)
