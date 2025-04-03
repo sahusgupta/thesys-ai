@@ -1,8 +1,5 @@
 from typing import List, Dict, Any
-from agents.citation_agent.agent import CitationAgent
-from agents.context_agent.agent import ContextAgent
-from agents.factcheck_agent.agent import FactCheckAgent
-from agents.scholar_agent.agent import ScholarAgent
+
 from backend.agent_communication import AgentCommunicationProtocol
 from backend.search_discovery import AgentDiscoveryService
 from backend.vector_storage import VectorKnowledgeBase
@@ -13,7 +10,7 @@ class ThesysOrchestrator:
         self.agents = {type(agent).__name__: agent for agent in agents}
         self.communication_protocol = AgentCommunicationProtocol(agents)
         self.discovery_service = AgentDiscoveryService(agentverse_client)
-        self.knowledge_base = VectorKnowledgeBase(pinecone_api_key = Config.PINECONE_API_KEY)
+        # self.knowledge_base = VectorKnowledgeBase(pinecone_api_key = Config.PINECONE_API_KEY)
         self.agent_connector = FetchaiAgentConnector()
         self.workflow_cache = {}
 

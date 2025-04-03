@@ -7,10 +7,10 @@ from backend.task_manager import ThesysOrchestrator
 from backend.agent_communication import AgentCommunicationProtocol
 
 # Import your agents
-from agents.scholar_agent.agent import ScholarAgent
+""" from agents.scholar_agent.agent import ScholarAgent
 from agents.factcheck_agent.agent import FactCheckAgent
 from agents.citation_agent.agent import CitationAgent
-from agents.context_agent.agent import ContextAgent
+from agents.context_agent.agent import ContextAgent """
 from agents.scholar_agent.agent import ScholarAgent
 
 app = Flask(__name__)
@@ -27,24 +27,24 @@ class ChatManager:
     def __init__(self):
         # Agents for orchestrator usage
         self.scholar_agent = ScholarAgent()
-        self.fact_check_agent = FactCheckAgent()
+        """         self.fact_check_agent = FactCheckAgent()
         self.citation_agent = CitationAgent()
-        self.context_agent = ContextAgent()
+        self.context_agent = ContextAgent() """
 
         # Initialize orchestrator with these agents
         self.orchestrator = ThesysOrchestrator([
             self.scholar_agent,
-            self.fact_check_agent,
+"""             self.fact_check_agent,
             self.context_agent,
-            self.citation_agent
+            self.citation_agent """
         ])
 
         # ACP for advanced messaging
         self.agent_protocol = AgentCommunicationProtocol([
             self.scholar_agent,
-            self.fact_check_agent,
+"""             self.fact_check_agent,
             self.citation_agent,
-            self.context_agent
+            self.context_agent """
         ])
 
         # Store chat sessions if you want to track history
