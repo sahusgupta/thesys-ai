@@ -5,7 +5,6 @@ import logging
 import json
 import arxiv
 import time
-from backend.paper_repository import PaperRepository
 
 class ScholarAgent:
     def __init__(self, api_key=None):
@@ -17,7 +16,6 @@ class ScholarAgent:
             self.headers["x-api-key"] = api_key
             
         # Initialize paper repository
-        self.paper_repository = PaperRepository()
         
         # Configure logging
         logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')

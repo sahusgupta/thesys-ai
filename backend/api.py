@@ -12,7 +12,6 @@ from agents.factcheck_agent.agent import FactCheckAgent
 from agents.citation_agent.agent import CitationAgent
 from agents.context_agent.agent import ContextAgent """
 from agents.scholar_agent.agent import ScholarAgent
-from backend.paper_repository import PaperRepository
 
 app = Flask(__name__)
 CORS(app)
@@ -52,7 +51,6 @@ class ChatManager:
         self.chat_sessions = {}
 
         # Initialize paper repository
-        self.paper_repository = PaperRepository()
 
     def process_chat_message(self, message: str, chat_id: str):
         """
