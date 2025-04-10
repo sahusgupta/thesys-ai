@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Search, Loader2, ExternalLink, BookOpen } from 'lucide-react';
+import axios from 'axios';
 
 const PaperSearch = () => {
   const [query, setQuery] = useState('');
@@ -7,6 +8,7 @@ const PaperSearch = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [totalResults, setTotalResults] = useState(0);
+  const [selectedPaper, setSelectedPaper] = useState(null);
 
   const handleSearch = async (e) => {
     e.preventDefault();
@@ -40,6 +42,24 @@ const PaperSearch = () => {
       setError(err.message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleViewPaper = async (paper) => {
+    try {
+      const response = await axios.get(`http://localhost:5000/api/papers/${paper.id}/content`, {
+        params: {
+          user_id: 'current_user_id' // Replace with actual user ID from auth context
+        }
+      });
+
+      if (response.data.status === 'success') {
+        setSelectedPaper(response.data.paper);
+      } else {
+        setError(response.data.message || 'Failed to load paper content');
+      }
+    } catch (err) {
+      setError(err.response?.data?.message || 'Error loading paper content');
     }
   };
 
@@ -103,7 +123,10 @@ const PaperSearch = () => {
               className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 hover:shadow-md transition-shadow"
             >
               <div className="flex justify-between items-start mb-4">
-                <h2 className="text-xl font-semibold text-gray-900 mb-2">
+                <h2 
+                  className="text-xl font-semibold text-gray-900 mb-2 cursor-pointer hover:text-[#407986]"
+                  onClick={() => handleViewPaper(paper)}
+                >
                   {paper.title}
                 </h2>
                 <a
@@ -147,6 +170,41 @@ const PaperSearch = () => {
         {!loading && papers.length === 0 && query && (
           <div className="text-center text-gray-600 py-8">
             No papers found matching your search. Try different keywords.
+          </div>
+        )}
+
+        {/* Paper Content Modal */}
+        {selectedPaper && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto p-6">
+              <div className="flex justify-between items-start mb-4">
+                <h2 className="text-2xl font-semibold">{selectedPaper.title}</h2>
+                <button
+                  onClick={() => setSelectedPaper(null)}
+                  className="text-gray-500 hover:text-gray-700"
+                >
+                  ✕
+                </button>
+              </div>
+              
+              {selectedPaper.content ? (
+                <div className="prose max-w-none">
+                  <pre className="whitespace-pre-wrap">{selectedPaper.content}</pre>
+                </div>
+              ) : (
+                <div className="text-center py-8">
+                  <a
+                    href={selectedPaper.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-[#407986] hover:text-[#2c5a66] flex items-center gap-1 justify-center"
+                  >
+                    <ExternalLink size={16} />
+                    View PDF
+                  </a>
+                </div>
+              )}
+            </div>
           </div>
         )}
       </div>

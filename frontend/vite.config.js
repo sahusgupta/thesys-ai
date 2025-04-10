@@ -6,5 +6,10 @@ export default defineConfig({
   esbuild: {
     loader: 'jsx',
     include: /src\/.*\.[tj]sx?$/  // Ensures .js files are read as JSX (optional if renaming)
+  },
+  server: {
+    proxy: {
+      '/api': 'http://localhost:5000'
+    }
   }
 });

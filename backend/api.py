@@ -1,6 +1,14 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import uuid
+import os
+from dotenv import load_dotenv
+from werkzeug.utils import secure_filename
+import logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+# Load environment variables from .env file
+load_dotenv()
 
 # Import your orchestrator & ACP
 from backend.task_manager import ThesysOrchestrator
@@ -15,6 +23,16 @@ from agents.scholar_agent.agent import ScholarAgent
 
 app = Flask(__name__)
 CORS(app)
+
+# Configure upload folder
+UPLOAD_FOLDER = 'uploads'
+ALLOWED_EXTENSIONS = {'pdf', 'txt'}
+
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+def allowed_file(filename):
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 class ChatManager:
     """
@@ -185,8 +203,12 @@ async def search_papers():
                 'message': 'Query parameter is required'
             }), 400
             
-        result = await chat_manager.scholar_agent.search_papers(query, limit, offset)
-        return jsonify(result)
+        result = await chat_manager.scholar_agent.search_papers(query, limit)
+        return jsonify({
+            'status': 'success',
+            'papers': result,
+            'total': len(result)
+        })
         
     except Exception as e:
         return jsonify({
@@ -209,7 +231,7 @@ async def get_paper_details(paper_id):
 @app.route('/api/papers/<paper_id>/pdf', methods=['GET'])
 def get_paper_pdf(paper_id):
     try:
-        url = chat_manager.paper_repository.get_paper_url(paper_id)
+        url = chat_manager.scholar_agent.get_paper_url(paper_id)
         if url:
             return jsonify({
                 'status': 'success',
@@ -219,6 +241,230 @@ def get_paper_pdf(paper_id):
             'status': 'error',
             'message': 'PDF not found'
         }), 404
+        
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
+
+@app.route('/api/library/search', methods=['POST'])
+async def search_library():
+    try:
+        data = request.get_json()
+        query = data.get('query')
+        user_id = data.get('user_id')  # This should come from the authenticated user's session
+        limit = data.get('limit', 10)
+        
+        if not query:
+            return jsonify({
+                'status': 'error',
+                'message': 'Query parameter is required'
+            }), 400
+            
+        if not user_id:
+            return jsonify({
+                'status': 'error',
+                'message': 'User ID is required'
+            }), 400
+            
+        result = await chat_manager.scholar_agent.search_user_library(query, user_id, limit)
+        return jsonify({
+            'status': 'success',
+            'papers': result,
+            'total': len(result)
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
+
+@app.route('/api/papers/upload', methods=['POST'])
+async def upload_paper():
+    try:
+        logger.info("Starting file upload process")
+        
+        # Check if file is present in request
+        if 'file' not in request.files:
+            logger.error("No file part in request")
+            return jsonify({
+                'status': 'error',
+                'message': 'No file part in request'
+            }), 400
+            
+        file = request.files['file']
+        logger.info(f"Received file: {file.filename}")
+        
+        # Validate file
+        if not file or file.filename == '':
+            logger.error("No file selected")
+            return jsonify({
+                'status': 'error',
+                'message': 'No file selected'
+            }), 400
+            
+        # Get user ID from form data
+        user_id = request.form.get('user_id')
+        logger.info(f"User ID from request: {user_id}")
+        
+        if not user_id:
+            logger.error("No user ID provided")
+            return jsonify({
+                'status': 'error',
+                'message': 'User ID is required'
+            }), 400
+            
+        # Read file data
+        try:
+            logger.info("Attempting to read file data")
+            file_data = file.read()
+            logger.info(f"File data length: {len(file_data) if file_data else 0}")
+            
+            if not file_data:
+                logger.error("File is empty")
+                return jsonify({
+                    'status': 'error',
+                    'message': 'File is empty'
+                }), 400
+        except Exception as e:
+            logger.error(f"Error reading file: {str(e)}")
+            return jsonify({
+                'status': 'error',
+                'message': f'Error reading file: {str(e)}'
+            }), 400
+            
+        # Get file metadata
+        file_name = secure_filename(file.filename)
+        file_type = file.content_type or 'application/octet-stream'
+        logger.info(f"File metadata - Name: {file_name}, Type: {file_type}")
+        
+        # Upload file
+        logger.info("Calling scholar_agent.upload_paper")
+        result = await chat_manager.scholar_agent.upload_paper(
+            user_id=user_id,
+            file_data=file_data,
+            file_name=file_name,
+            file_type=file_type
+        )
+        logger.info(f"Upload result: {result}")
+        
+        if result['status'] == 'success':
+            return jsonify(result)
+        else:
+            logger.error(f"Upload failed: {result}")
+            return jsonify(result), 500
+            
+    except Exception as e:
+        logger.error(f"Error in upload_paper endpoint: {str(e)}", exc_info=True)
+        return jsonify({
+            'status': 'error',
+            'message': f'An unexpected error occurred: {str(e)}'
+        }), 500
+
+@app.route('/api/papers/<paper_id>/content', methods=['GET'])
+async def get_paper_content(paper_id):
+    try:
+        # Get user ID from session (you'll need to implement proper authentication)
+        user_id = request.args.get('user_id')
+        if not user_id:
+            return jsonify({
+                'status': 'error',
+                'message': 'User ID is required'
+            }), 400
+            
+        result = await chat_manager.scholar_agent.get_uploaded_paper(user_id, paper_id)
+        
+        if result['status'] == 'success':
+            return jsonify(result)
+        else:
+            return jsonify(result), 404
+            
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
+
+@app.route('/api/library/files', methods=['POST'])
+async def get_user_files():
+    try:
+        data = request.get_json()
+        if not data or 'user_id' not in data:
+            return jsonify({
+                'status': 'error',
+                'message': 'User ID is required'
+            }), 400
+            
+        user_id = data['user_id']
+        files = chat_manager.scholar_agent.get_user_library_files(user_id)
+        
+        return jsonify({
+            'status': 'success',
+            'files': files
+        })
+        
+    except Exception as e:
+        logger.error(f"Error getting user files: {str(e)}", exc_info=True)
+        return jsonify({
+            'status': 'error',
+            'message': 'Error retrieving files'
+        }), 500
+
+@app.route('/api/library/files/<file_id>', methods=['POST'])
+async def get_file_details(file_id):
+    try:
+        data = request.get_json()
+        user_id = data.get('user_id')
+        
+        if not user_id:
+            return jsonify({
+                'status': 'error',
+                'message': 'User ID is required'
+            }), 400
+            
+        file_details = chat_manager.scholar_agent.get_file_details(user_id, file_id)
+        if not file_details:
+            return jsonify({
+                'status': 'error',
+                'message': 'File not found'
+            }), 404
+            
+        return jsonify({
+            'status': 'success',
+            'file': file_details
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
+
+@app.route('/api/library/files/<file_id>/delete', methods=['POST'])
+async def delete_file(file_id):
+    try:
+        data = request.get_json()
+        user_id = data.get('user_id')
+        
+        if not user_id:
+            return jsonify({
+                'status': 'error',
+                'message': 'User ID is required'
+            }), 400
+            
+        success = chat_manager.scholar_agent.delete_file(user_id, file_id)
+        if not success:
+            return jsonify({
+                'status': 'error',
+                'message': 'Failed to delete file'
+            }), 500
+            
+        return jsonify({
+            'status': 'success',
+            'message': 'File deleted successfully'
+        })
         
     except Exception as e:
         return jsonify({

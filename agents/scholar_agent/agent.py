@@ -1,25 +1,40 @@
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import requests
 from datetime import datetime
 import logging
 import json
 import arxiv
 import time
+import psycopg2
+import os
+from pathlib import Path
+from psycopg2 import OperationalError
+from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
+from backend.init_db import init_database
+import boto3
+from botocore.exceptions import ClientError
+import PyPDF2
+import io
+import uuid
 
 class ScholarAgent:
-    def __init__(self, api_key=None):
-        self.base_url = "https://api.semanticscholar.org/graph/v1"
-        self.headers = {"Accept": "application/json"}
-        
-        # Add API key if available (recommended to avoid stricter rate limits)
-        if api_key:
-            self.headers["x-api-key"] = api_key
-            
-        # Initialize paper repository
-        
-        # Configure logging
+    def __init__(self, base_url: str = "http://localhost:5000"):
+        # Configure logging first
         logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
         self.logger = logging.getLogger(__name__)
+        
+        self.base_url = base_url
+        self.headers = {
+            "Content-Type": "application/json",
+        }
+        
+        # Initialize database connection
+        self.db_conn = None
+        self._ensure_db_connection()
+        
+        # Create papers directory if it doesn't exist
+        self.papers_dir = Path("data/papers")
+        self.papers_dir.mkdir(parents=True, exist_ok=True)
         
         # Rate limiting parameters
         self.max_retries = 3
@@ -31,7 +46,173 @@ class ScholarAgent:
             delay_seconds=3.0,
             num_retries=3
         )
+        
+        # Initialize S3 client
+        try:
+            self.s3_bucket = os.getenv('S3_BUCKET')
+            if not self.s3_bucket:
+                raise ValueError("S3_BUCKET environment variable is not set")
+                
+            self.s3_client = boto3.client(
+                's3',
+                aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID'),
+                aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY'),
+                region_name=os.getenv('AWS_REGION', 'us-east-1')
+            )
+            
+            # Verify S3 bucket exists and is accessible
+            self.s3_client.head_bucket(Bucket=self.s3_bucket)
+            self.logger.info(f"Successfully connected to S3 bucket: {self.s3_bucket}")
+            
+        except Exception as e:
+            self.logger.error(f"Error initializing S3 client: {str(e)}")
+            raise
     
+    def _connect_to_db(self, max_retries: int = 3, initial_delay: float = 1.0) -> None:
+        """Connect to PostgreSQL with retry logic and exponential backoff."""
+        delay = initial_delay
+        for attempt in range(max_retries):
+            try:
+                self.db_conn = psycopg2.connect(
+                    host="localhost",
+                    database="paper_repository",
+                    user="postgres",
+                    password="ktsg1899"
+                )
+                self.logger.info("Successfully connected to database")
+                return
+            except psycopg2.OperationalError as e:
+                if attempt == max_retries - 1:
+                    self.logger.error(f"Failed to connect to database after {max_retries} attempts")
+                    raise
+                
+                self.logger.warning(f"Database connection attempt {attempt + 1} failed: {str(e)}")
+                self.logger.info(f"Retrying in {delay} seconds...")
+                time.sleep(delay)
+                delay *= 2  # Exponential backoff
+
+    def _ensure_db_connection(self) -> None:
+        """Ensure we have an active database connection."""
+        try:
+            if self.db_conn is None or self.db_conn.closed:
+                self._connect_to_db()
+        except psycopg2.OperationalError as e:
+            if "database \"paper_repository\" does not exist" in str(e):
+                self.logger.info("Database does not exist. Initializing...")
+                init_database()
+                self._connect_to_db()
+            else:
+                raise
+
+    def get_paper_url(self, paper_id: str) -> Optional[str]:
+        """Get the URL for a paper by its ID."""
+        try:
+            self._ensure_db_connection()
+            with self.db_conn.cursor() as cur:
+                cur.execute("""
+                    SELECT url FROM papers WHERE id = %s
+                """, (paper_id,))
+                result = cur.fetchone()
+                if result:
+                    return result[0]
+                return None
+        except Exception as e:
+            self.logger.error(f"Error getting paper URL: {str(e)}")
+            return None
+
+    async def search_papers(self, query: str, max_results: int = 10) -> List[Dict]:
+        """Search for papers in both Semantic Scholar and ArXiv APIs."""
+        try:
+            # Search Semantic Scholar
+            semantic_results = await self._search_semantic_scholar(query, max_results, 0)
+            semantic_papers = semantic_results.get('papers', []) if semantic_results.get('status') == 'success' else []
+            
+            # Search ArXiv
+            arxiv_papers = self._search_arxiv(query, max_results)
+            
+            # Combine and deduplicate results
+            all_papers = []
+            seen_ids = set()
+            
+            # Add Semantic Scholar papers first
+            for paper in semantic_papers:
+                if paper['id'] not in seen_ids:
+                    all_papers.append(paper)
+                    seen_ids.add(paper['id'])
+            
+            # Add ArXiv papers, avoiding duplicates
+            for paper in arxiv_papers:
+                if paper['id'] not in seen_ids:
+                    all_papers.append(paper)
+                    seen_ids.add(paper['id'])
+            
+            # Sort by year and citations
+            all_papers.sort(key=lambda x: (x.get('year', 0), x.get('citations', 0)), reverse=True)
+            
+            # Limit results
+            return all_papers[:max_results]
+            
+        except Exception as e:
+            self.logger.error(f"Error searching papers: {str(e)}")
+            return []
+
+    async def get_paper_details(self, paper_id: str) -> Optional[Dict]:
+        """Get detailed information about a paper."""
+        try:
+            self._ensure_db_connection()
+            with self.db_conn.cursor() as cur:
+                cur.execute("""
+                    SELECT p.*, COUNT(c.id) as citation_count
+                    FROM papers p
+                    LEFT JOIN citations c ON p.id = c.cited_paper_id
+                    WHERE p.id = %s
+                    GROUP BY p.id
+                """, (paper_id,))
+                
+                row = cur.fetchone()
+                if row:
+                    return {
+                        'id': row[0],
+                        'title': row[1],
+                        'abstract': row[2],
+                        'authors': row[3],
+                        'year': row[4],
+                        'url': row[5],
+                        'citation_count': row[6]
+                    }
+                return None
+        except Exception as e:
+            self.logger.error(f"Error getting paper details: {str(e)}")
+            return None
+
+    def save_paper(self, paper_data: Dict) -> bool:
+        """Save paper data to the database."""
+        try:
+            self._ensure_db_connection()
+            with self.db_conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO papers (id, title, abstract, authors, year, url)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (id) DO UPDATE
+                    SET title = EXCLUDED.title,
+                        abstract = EXCLUDED.abstract,
+                        authors = EXCLUDED.authors,
+                        year = EXCLUDED.year,
+                        url = EXCLUDED.url
+                """, (
+                    paper_data['id'],
+                    paper_data['title'],
+                    paper_data['abstract'],
+                    paper_data['authors'],
+                    paper_data['year'],
+                    paper_data['url']
+                ))
+                self.db_conn.commit()
+                return True
+        except Exception as e:
+            self.logger.error(f"Error saving paper: {str(e)}")
+            return False
+
     def _make_request_with_backoff(self, url, params=None):
         """Helper method to make API requests with exponential backoff"""
         retries = 0
@@ -91,90 +272,374 @@ class ScholarAgent:
             self.logger.error(f"ArXiv API error: {str(e)}")
             return []
 
-    async def search_papers(self, query: str, limit: int = 10, offset: int = 0) -> Dict[str, Any]:
-        """Search papers using OpenSearch and fall back to Semantic Scholar if needed"""
+    async def _search_semantic_scholar(self, query: str, limit: int, offset: int) -> Dict[str, Any]:
+        """Search papers using Semantic Scholar API"""
         try:
-            # First try OpenSearch
-            search_results = self.paper_repository.search_client.search(
-                index="papers",
-                body={
-                    "query": {
-                        "multi_match": {
-                            "query": query,
-                            "fields": ["title^3", "abstract^2", "content"]
-                        }
-                    },
-                    "size": limit,
-                    "from": offset
-                }
-            )
-            
-            papers = []
-            for hit in search_results['hits']['hits']:
-                paper_data = hit['_source']
-                papers.append({
-                    'id': hit['_id'],
-                    'title': paper_data['title'],
-                    'abstract': paper_data['abstract'],
-                    'authors': paper_data['authors'],
-                    'year': paper_data['year'],
-                    'venue': paper_data['venue'],
-                    'score': hit['_score']
-                })
-            
-            if papers:
+            response = self._make_request_with_backoff(f"{self.base_url}/paper/search", params={"query": query, "limit": limit, "offset": offset})
+            if response:
+                data = response.json()
+                papers = []
+                for result in data["data"]:
+                    paper = {
+                        "id": result["paperId"],
+                        "title": result["title"],
+                        "abstract": result["abstract"],
+                        "authors": [author["name"] for author in result["authors"]],
+                        "year": result["year"],
+                        "venue": result["venue"],
+                        "citations": result["citationCount"],
+                        "url": result["url"],
+                        "timestamp": result["updated"].split("T")[0]
+                    }
+                    papers.append(paper)
+                
                 return {
                     'status': 'success',
                     'papers': papers,
-                    'total': search_results['hits']['total']['value']
+                    'total': data["total"]
                 }
-            
-            # If no results, fall back to Semantic Scholar API
-            return await self._search_semantic_scholar(query, limit, offset)
-            
+            else:
+                return {
+                    'status': 'error',
+                    'message': 'No response from Semantic Scholar API'
+                }
         except Exception as e:
-            self.logger.error(f"Search error: {str(e)}")
+            self.logger.error(f"Semantic Scholar API error: {str(e)}")
             return {
                 'status': 'error',
                 'message': str(e)
             }
 
-    async def get_paper_details(self, paper_id: str) -> Dict[str, Any]:
-        """Get paper details from local storage or Semantic Scholar"""
+    async def _fetch_semantic_scholar_paper(self, paper_id: str) -> Dict[str, Any]:
+        """Fetch paper details from Semantic Scholar API"""
         try:
-            # First check local database
-            with self.paper_repository.db.cursor() as cur:
-                cur.execute("""
-                    SELECT id, title, authors, year, venue, abstract, s3_key
-                    FROM papers WHERE id = %s
-                """, (paper_id,))
-                result = cur.fetchone()
-                
-                if result:
-                    # Generate presigned URL for PDF if available
-                    pdf_url = None
-                    if result[6]:  # s3_key
-                        pdf_url = self.paper_repository.get_paper_url(paper_id)
-                    
-                    return {
-                        'status': 'success',
-                        'paper': {
-                            'id': result[0],
-                            'title': result[1],
-                            'authors': result[2],
-                            'year': result[3],
-                            'venue': result[4],
-                            'abstract': result[5],
-                            'pdf_url': pdf_url
-                        }
-                    }
-            
-            # If not found locally, fetch from Semantic Scholar
-            return await self._fetch_semantic_scholar_paper(paper_id)
-            
+            response = self._make_request_with_backoff(f"{self.base_url}/paper/{paper_id}")
+            if response:
+                data = response.json()
+                paper = {
+                    "id": data["paperId"],
+                    "title": data["title"],
+                    "abstract": data["abstract"],
+                    "authors": [author["name"] for author in data["authors"]],
+                    "year": data["year"],
+                    "venue": data["venue"],
+                    "citations": data["citationCount"],
+                    "url": data["url"],
+                    "timestamp": data["updated"].split("T")[0]
+                }
+                return {
+                    'status': 'success',
+                    'paper': paper
+                }
+            else:
+                return {
+                    'status': 'error',
+                    'message': 'No response from Semantic Scholar API'
+                }
         except Exception as e:
-            self.logger.error(f"Error fetching paper details: {str(e)}")
+            self.logger.error(f"Semantic Scholar API error: {str(e)}")
             return {
                 'status': 'error',
                 'message': str(e)
             }
+
+    async def search_user_library(self, query: str, user_id: str, max_results: int = 10) -> List[Dict]:
+        """Search for papers in the user's library."""
+        try:
+            self._ensure_db_connection()
+            with self.db_conn.cursor() as cur:
+                cur.execute("""
+                    SELECT p.*, COUNT(c.id) as citation_count
+                    FROM papers p
+                    LEFT JOIN citations c ON p.id = c.cited_paper_id
+                    INNER JOIN user_library ul ON p.id = ul.paper_id
+                    WHERE ul.user_id = %s
+                    AND to_tsvector('english', p.title || ' ' || p.abstract) @@ to_tsquery('english', %s)
+                    GROUP BY p.id
+                    ORDER BY citation_count DESC
+                    LIMIT %s
+                """, (user_id, query, max_results))
+                
+                results = []
+                for row in cur.fetchall():
+                    results.append({
+                        'id': row[0],
+                        'title': row[1],
+                        'abstract': row[2],
+                        'authors': row[3],
+                        'year': row[4],
+                        'url': row[5],
+                        'citation_count': row[6]
+                    })
+                return results
+        except Exception as e:
+            self.logger.error(f"Error searching user library: {str(e)}")
+            return []
+
+    async def upload_paper(self, user_id: str, file_data: bytes, file_name: str, file_type: str) -> Dict:
+        """Upload a paper to S3."""
+        try:
+            self.logger.info("Starting file upload in ScholarAgent")
+            
+            # Validate inputs
+            if not user_id:
+                self.logger.error("User ID is missing")
+                raise ValueError("User ID is required")
+            if not file_data:
+                self.logger.error("File data is missing")
+                raise ValueError("File data is required")
+            if not file_name:
+                self.logger.error("File name is missing")
+                raise ValueError("File name is required")
+            if not file_type:
+                self.logger.error("File type is missing")
+                raise ValueError("File type is required")
+
+            # Generate a unique file ID
+            file_id = str(uuid.uuid4())
+            self.logger.info(f"Generated file ID: {file_id}")
+            
+            # Create S3 key
+            s3_key = f"user_uploads/{user_id}/{file_id}/{file_name}"
+            self.logger.info(f"Created S3 key: {s3_key}")
+            
+            # Upload to S3
+            try:
+                self.logger.info("Attempting S3 upload")
+                self.s3_client.put_object(
+                    Bucket=self.s3_bucket,
+                    Key=s3_key,
+                    Body=file_data,
+                    ContentType=file_type,
+                    Metadata={
+                        'user_id': user_id,
+                        'file_name': file_name,
+                        'file_type': file_type,
+                        'created_at': datetime.now().isoformat()
+                    }
+                )
+                self.logger.info("S3 upload successful")
+            except Exception as e:
+                self.logger.error(f"S3 upload error: {str(e)}", exc_info=True)
+                raise ValueError(f"Failed to upload file to S3: {str(e)}")
+            
+            return {
+                'status': 'success',
+                'file_id': file_id,
+                'message': 'File uploaded successfully',
+                'url': f"https://{self.s3_bucket}.s3.amazonaws.com/{s3_key}"
+            }
+            
+        except ValueError as ve:
+            self.logger.error(f"Validation error: {str(ve)}", exc_info=True)
+            return {
+                'status': 'error',
+                'message': str(ve)
+            }
+        except Exception as e:
+            self.logger.error(f"Unexpected error in upload_paper: {str(e)}", exc_info=True)
+            return {
+                'status': 'error',
+                'message': f"An unexpected error occurred: {str(e)}"
+            }
+
+    def _extract_text_from_pdf(self, pdf_data: bytes) -> str:
+        """Extract text from PDF file."""
+        try:
+            pdf_file = io.BytesIO(pdf_data)
+            pdf_reader = PyPDF2.PdfReader(pdf_file)
+            text = ""
+            for page in pdf_reader.pages:
+                text += page.extract_text()
+            return text
+        except Exception as e:
+            self.logger.error(f"Error extracting text from PDF: {str(e)}")
+            return ""
+
+    async def get_uploaded_paper(self, user_id: str, paper_id: str) -> Dict:
+        """Get an uploaded paper's content and metadata."""
+        try:
+            self._ensure_db_connection()
+            with self.db_conn.cursor() as cur:
+                # Get upload metadata
+                cur.execute("""
+                    SELECT u.*, p.title, p.abstract
+                    FROM user_uploads u
+                    JOIN papers p ON u.paper_id = p.id
+                    WHERE u.user_id = %s AND u.paper_id = %s
+                """, (user_id, paper_id))
+                
+                upload = cur.fetchone()
+                if not upload:
+                    return {
+                        'status': 'error',
+                        'message': 'Paper not found'
+                    }
+                
+                # Get file from S3
+                try:
+                    response = self.s3_client.get_object(
+                        Bucket=self.s3_bucket,
+                        Key=upload[4]  # s3_key
+                    )
+                    file_content = response['Body'].read()
+                    
+                    return {
+                        'status': 'success',
+                        'paper': {
+                            'id': paper_id,
+                            'title': upload[7],  # title
+                            'abstract': upload[8],  # abstract
+                            'file_name': upload[3],  # file_name
+                            'file_type': upload[5],  # file_type
+                            'content': file_content.decode('utf-8') if upload[5] == 'text/plain' else None,
+                            'url': f"https://{self.s3_bucket}.s3.amazonaws.com/{upload[4]}"  # s3_key
+                        }
+                    }
+                except ClientError as e:
+                    self.logger.error(f"Error retrieving file from S3: {str(e)}")
+                    return {
+                        'status': 'error',
+                        'message': 'Error retrieving file'
+                    }
+                    
+        except Exception as e:
+            self.logger.error(f"Error getting uploaded paper: {str(e)}")
+            return {
+                'status': 'error',
+                'message': str(e)
+            }
+
+    def _generate_presigned_url(self, key: str, expires_in: int = 3600) -> str:
+        """Generate a pre-signed URL for an S3 object."""
+        try:
+            url = self.s3_client.generate_presigned_url(
+                'get_object',
+                Params={
+                    'Bucket': self.s3_bucket,
+                    'Key': key
+                },
+                ExpiresIn=expires_in
+            )
+            return url
+        except Exception as e:
+            self.logger.error(f"Error generating pre-signed URL: {str(e)}")
+            return None
+
+    def get_user_library_files(self, user_id: str) -> List[Dict[str, Any]]:
+        """Get all files in a user's library from S3."""
+        try:
+            self.logger.info(f"Getting files for user: {user_id}")
+            
+            # List objects in the user's directory
+            response = self.s3_client.list_objects_v2(
+                Bucket=self.s3_bucket,
+                Prefix=f"user_uploads/{user_id}/"
+            )
+            
+            files = []
+            if 'Contents' in response:
+                for obj in response['Contents']:
+                    # Get object metadata
+                    metadata = self.s3_client.head_object(
+                        Bucket=self.s3_bucket,
+                        Key=obj['Key']
+                    )['Metadata']
+                    
+                    # Extract file ID from the key
+                    file_id = obj['Key'].split('/')[2]
+                    
+                    # Generate pre-signed URL
+                    url = self._generate_presigned_url(obj['Key'])
+                    
+                    if url:
+                        files.append({
+                            'id': file_id,
+                            'file_name': metadata.get('file_name', obj['Key'].split('/')[-1]),
+                            'file_type': metadata.get('file_type', 'application/octet-stream'),
+                            'created_at': metadata.get('created_at', obj['LastModified'].isoformat()),
+                            'url': url
+                        })
+            
+            self.logger.info(f"Found {len(files)} files for user {user_id}")
+            return files
+            
+        except Exception as e:
+            self.logger.error(f"Error getting user files: {str(e)}", exc_info=True)
+            return []
+
+    def get_file_details(self, user_id: str, file_id: str) -> Optional[Dict[str, Any]]:
+        """Get details of a specific file from S3."""
+        try:
+            self.logger.info(f"Getting details for file {file_id} of user {user_id}")
+            
+            # List objects with the specific file ID
+            response = self.s3_client.list_objects_v2(
+                Bucket=self.s3_bucket,
+                Prefix=f"user_uploads/{user_id}/{file_id}/"
+            )
+            
+            if 'Contents' not in response or not response['Contents']:
+                self.logger.error(f"File {file_id} not found for user {user_id}")
+                return None
+                
+            obj = response['Contents'][0]
+            
+            # Get object metadata
+            metadata = self.s3_client.head_object(
+                Bucket=self.s3_bucket,
+                Key=obj['Key']
+            )['Metadata']
+            
+            # Generate pre-signed URL
+            url = self._generate_presigned_url(obj['Key'])
+            
+            if not url:
+                self.logger.error(f"Failed to generate URL for file {file_id}")
+                return None
+            
+            return {
+                'id': file_id,
+                'file_name': metadata.get('file_name', obj['Key'].split('/')[-1]),
+                'file_type': metadata.get('file_type', 'application/octet-stream'),
+                'created_at': metadata.get('created_at', obj['LastModified'].isoformat()),
+                'url': url
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error getting file details: {str(e)}", exc_info=True)
+            return None
+
+    def delete_file(self, user_id: str, file_id: str) -> bool:
+        """Delete a file from S3."""
+        try:
+            self.logger.info(f"Deleting file {file_id} for user {user_id}")
+            
+            # List objects with the specific file ID
+            response = self.s3_client.list_objects_v2(
+                Bucket=self.s3_bucket,
+                Prefix=f"user_uploads/{user_id}/{file_id}/"
+            )
+            
+            if 'Contents' not in response:
+                self.logger.error(f"File {file_id} not found for user {user_id}")
+                return False
+                
+            # Delete all objects with this prefix (in case there are multiple versions)
+            for obj in response['Contents']:
+                self.s3_client.delete_object(
+                    Bucket=self.s3_bucket,
+                    Key=obj['Key']
+                )
+            
+            self.logger.info(f"Successfully deleted file {file_id} for user {user_id}")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Error deleting file: {str(e)}", exc_info=True)
+            return False
+
+    def __del__(self):
+        """Clean up database connection when the object is destroyed."""
+        if self.db_conn and not self.db_conn.closed:
+            self.db_conn.close()
