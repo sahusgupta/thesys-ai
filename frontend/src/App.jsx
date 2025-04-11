@@ -14,7 +14,7 @@ import Citations from './pages/Citations';
 import Library from './pages/Library';
 import Settings from './pages/Settings';
 import Login from './pages/Login';
-import SignUp from './pages/SignUp';
+import SignUp from './pages/Signup';
 import PaperSearch from './pages/PaperSearch';
 
 function App() {
