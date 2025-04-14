@@ -37,7 +37,7 @@ class ScholarAgent:
         self.papers_dir.mkdir(parents=True, exist_ok=True)
         
         # Rate limiting parameters
-        self.max_retries = 3
+        self.max_retries = 1
         self.retry_delay = 1  # Initial delay in seconds
         
         # ArXiv API client
@@ -123,34 +123,24 @@ class ScholarAgent:
     async def search_papers(self, query: str, max_results: int = 10) -> List[Dict]:
         """Search for papers in both Semantic Scholar and ArXiv APIs."""
         try:
-            # Search Semantic Scholar
+            # First try Semantic Scholar
             semantic_results = await self._search_semantic_scholar(query, max_results, 0)
             semantic_papers = semantic_results.get('papers', []) if semantic_results.get('status') == 'success' else []
             
-            # Search ArXiv
+            # If we got results from Semantic Scholar, return them
+            if semantic_papers:
+                return semantic_papers[:max_results]
+            
+            # If no results from Semantic Scholar, try ArXiv
+            self.logger.info("No results from Semantic Scholar, falling back to ArXiv")
             arxiv_papers = self._search_arxiv(query, max_results)
             
-            # Combine and deduplicate results
-            all_papers = []
-            seen_ids = set()
+            if arxiv_papers:
+                return arxiv_papers[:max_results]
             
-            # Add Semantic Scholar papers first
-            for paper in semantic_papers:
-                if paper['id'] not in seen_ids:
-                    all_papers.append(paper)
-                    seen_ids.add(paper['id'])
-            
-            # Add ArXiv papers, avoiding duplicates
-            for paper in arxiv_papers:
-                if paper['id'] not in seen_ids:
-                    all_papers.append(paper)
-                    seen_ids.add(paper['id'])
-            
-            # Sort by year and citations
-            all_papers.sort(key=lambda x: (x.get('year', 0), x.get('citations', 0)), reverse=True)
-            
-            # Limit results
-            return all_papers[:max_results]
+            # If no results from either source, return empty list
+            self.logger.warning(f"No results found for query: {query}")
+            return []
             
         except Exception as e:
             self.logger.error(f"Error searching papers: {str(e)}")
@@ -275,28 +265,37 @@ class ScholarAgent:
     async def _search_semantic_scholar(self, query: str, limit: int, offset: int) -> Dict[str, Any]:
         """Search papers using Semantic Scholar API"""
         try:
-            response = self._make_request_with_backoff(f"{self.base_url}/paper/search", params={"query": query, "limit": limit, "offset": offset})
+            # Use Semantic Scholar API directly
+            url = "https://api.semanticscholar.org/graph/v1/paper/search"
+            params = {
+                "query": query,
+                "limit": limit,
+                "offset": offset,
+                "fields": "paperId,title,abstract,authors,year,venue,citationCount,url,updated"
+            }
+            
+            response = self._make_request_with_backoff(url, params=params)
             if response:
                 data = response.json()
                 papers = []
-                for result in data["data"]:
+                for result in data.get("data", []):
                     paper = {
-                        "id": result["paperId"],
-                        "title": result["title"],
-                        "abstract": result["abstract"],
-                        "authors": [author["name"] for author in result["authors"]],
-                        "year": result["year"],
-                        "venue": result["venue"],
-                        "citations": result["citationCount"],
-                        "url": result["url"],
-                        "timestamp": result["updated"].split("T")[0]
+                        "id": result.get("paperId", ""),
+                        "title": result.get("title", ""),
+                        "abstract": result.get("abstract", ""),
+                        "authors": [author.get("name", "") for author in result.get("authors", [])],
+                        "year": result.get("year", ""),
+                        "venue": result.get("venue", ""),
+                        "citations": result.get("citationCount", 0),
+                        "url": result.get("url", ""),
+                        "timestamp": result.get("updated", "").split("T")[0] if result.get("updated") else ""
                     }
                     papers.append(paper)
                 
                 return {
                     'status': 'success',
                     'papers': papers,
-                    'total': data["total"]
+                    'total': data.get("total", 0)
                 }
             else:
                 return {
@@ -531,38 +530,59 @@ class ScholarAgent:
         try:
             self.logger.info(f"Getting files for user: {user_id}")
             
+            # Verify S3 client is properly initialized
+            if not hasattr(self, 's3_client') or not self.s3_client:
+                self.logger.error("S3 client not initialized")
+                return []
+                
+            # Verify bucket exists and is accessible
+            try:
+                self.s3_client.head_bucket(Bucket=self.s3_bucket)
+            except Exception as e:
+                self.logger.error(f"Error accessing S3 bucket {self.s3_bucket}: {str(e)}")
+                return []
+            
             # List objects in the user's directory
-            response = self.s3_client.list_objects_v2(
-                Bucket=self.s3_bucket,
-                Prefix=f"user_uploads/{user_id}/"
-            )
-            
-            files = []
-            if 'Contents' in response:
-                for obj in response['Contents']:
-                    # Get object metadata
-                    metadata = self.s3_client.head_object(
-                        Bucket=self.s3_bucket,
-                        Key=obj['Key']
-                    )['Metadata']
-                    
-                    # Extract file ID from the key
-                    file_id = obj['Key'].split('/')[2]
-                    
-                    # Generate pre-signed URL
-                    url = self._generate_presigned_url(obj['Key'])
-                    
-                    if url:
-                        files.append({
-                            'id': file_id,
-                            'file_name': metadata.get('file_name', obj['Key'].split('/')[-1]),
-                            'file_type': metadata.get('file_type', 'application/octet-stream'),
-                            'created_at': metadata.get('created_at', obj['LastModified'].isoformat()),
-                            'url': url
-                        })
-            
-            self.logger.info(f"Found {len(files)} files for user {user_id}")
-            return files
+            try:
+                response = self.s3_client.list_objects_v2(
+                    Bucket=self.s3_bucket,
+                    Prefix=f"user_uploads/{user_id}/"
+                )
+                
+                files = []
+                if 'Contents' in response:
+                    for obj in response['Contents']:
+                        try:
+                            # Get object metadata
+                            metadata = self.s3_client.head_object(
+                                Bucket=self.s3_bucket,
+                                Key=obj['Key']
+                            )['Metadata']
+                            
+                            # Extract file ID from the key
+                            file_id = obj['Key'].split('/')[2]
+                            
+                            # Generate pre-signed URL
+                            url = self._generate_presigned_url(obj['Key'])
+                            
+                            if url:
+                                files.append({
+                                    'id': file_id,
+                                    'file_name': metadata.get('file_name', obj['Key'].split('/')[-1]),
+                                    'file_type': metadata.get('file_type', 'application/octet-stream'),
+                                    'created_at': metadata.get('created_at', obj['LastModified'].isoformat()),
+                                    'url': url
+                                })
+                        except Exception as e:
+                            self.logger.error(f"Error processing file {obj['Key']}: {str(e)}")
+                            continue
+                
+                self.logger.info(f"Found {len(files)} files for user {user_id}")
+                return files
+                
+            except Exception as e:
+                self.logger.error(f"Error listing objects in S3: {str(e)}")
+                return []
             
         except Exception as e:
             self.logger.error(f"Error getting user files: {str(e)}", exc_info=True)

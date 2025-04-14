@@ -1,76 +1,164 @@
 // src/pages/Search.jsx
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { useAuth } from '../context/AuthContext';
+import { FaHeart, FaRegHeart, FaDownload } from 'react-icons/fa';
 
-const dummyResults = [
-  { id: 1, title: 'Deep Learning for Image Recognition', snippet: 'This paper explores...' },
-  { id: 2, title: 'AI in Finance: Risk Modeling', snippet: 'Financial markets rely on AI...' },
-  { id: 3, title: 'Natural Language Processing Overview', snippet: 'NLP techniques are crucial...' },
-];
-
-function Search() {
+export default function Search() {
   const [query, setQuery] = useState('');
-  const [results, setResults] = useState([]);
+  const [papers, setPapers] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const { user } = useAuth();
 
-  const handleSearch = (e) => {
-    e.preventDefault();
-    // For now, just filter dummy results
-    const filtered = dummyResults.filter(item =>
-      item.title.toLowerCase().includes(query.toLowerCase())
-    );
-    setResults(filtered);
+  const searchPapers = async () => {
+    if (!query.trim()) return;
+    
+    setLoading(true);
+    setError('');
+    
+    try {
+      const response = await fetch('http://localhost:5000/api/search', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ query }),
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to search papers');
+      }
+      
+      const data = await response.json();
+      setPapers(data.papers || []);
+    } catch (err) {
+      setError('Failed to search papers. Please try again.');
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const toggleFavorite = async (paperId) => {
+    if (!user) return;
+    
+    try {
+      const response = await fetch('http://localhost:5000/api/library', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          user_id: user.uid,
+          paper_id: paperId,
+          action: 'toggle'
+        }),
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to update library');
+      }
+      
+      // Update local state to reflect the change
+      setPapers(papers.map(paper => 
+        paper.id === paperId 
+          ? { ...paper, is_favorite: !paper.is_favorite }
+          : paper
+      ));
+    } catch (err) {
+      console.error('Error updating library:', err);
+    }
+  };
+
+  const downloadPaper = async (paperId) => {
+    if (!user) return;
+    
+    try {
+      const response = await fetch(`http://localhost:5000/api/papers/${paperId}/download`, {
+        headers: {
+          'Authorization': `Bearer ${user.accessToken}`,
+        },
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to download paper');
+      }
+      
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `paper-${paperId}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    } catch (err) {
+      console.error('Error downloading paper:', err);
+    }
   };
 
   return (
-    <div className="min-h-screen flex bg-gray-50 text-gray-900">
-      <div className="flex-1 p-4 md:p-6">
-        {/* Gradient Banner */}
-        <div
-          className="rounded-md p-4 mb-6 text-gray-800 shadow-sm relative overflow-hidden"
-          style={{
-            background: 'linear-gradient(120deg, #f0f9ff 0%, #e0f4f8 35%, #ffffff 100%)',
-          }}
-        >
-          <div className="relative">
-            <h1 className="text-2xl font-bold mb-2">🔍 AI Search</h1>
-            <p className="text-sm text-gray-700">
-              Search your documents and citations using powerful AI indexing.
-            </p>
+    <div className="min-h-screen bg-gray-50 p-6">
+      <div className="max-w-4xl mx-auto">
+        <div className="mb-8">
+          <h1 className="text-3xl font-bold text-gray-900 mb-4">Search Papers</h1>
+          <div className="flex gap-4">
+            <input
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search for papers..."
+              className="flex-1 px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#4B8795]"
+            />
+            <button
+              onClick={searchPapers}
+              disabled={loading}
+              className="px-4 py-2 bg-[#4B8795] text-white rounded-md hover:bg-[#407986] focus:outline-none focus:ring-2 focus:ring-[#4B8795]"
+            >
+              {loading ? 'Searching...' : 'Search'}
+            </button>
           </div>
         </div>
 
-        <form onSubmit={handleSearch} className="flex gap-2 mb-6">
-          <input
-            type="text"
-            className="flex-grow border border-gray-300 rounded-lg p-3 focus:ring-[#4B8795] focus:border-[#4B8795]"
-            placeholder="Enter your search query..."
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-          />
-          <button
-            type="submit"
-            className="bg-[#4B8795] text-white px-6 py-2 rounded-lg hover:bg-[#407986] transition"
-          >
-            Search
-          </button>
-        </form>
+        {error && (
+          <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative mb-4">
+            {error}
+          </div>
+        )}
 
-        <div className="grid gap-4">
-          {results.map((res) => (
-            <div key={res.id} className="bg-white p-4 rounded-lg border hover:shadow-md transition">
-              <h2 className="font-semibold text-[#4B8795]">{res.title}</h2>
-              <p className="text-sm text-gray-600 mt-1">{res.snippet}</p>
+        <div className="space-y-4">
+          {papers.map((paper) => (
+            <div key={paper.id} className="bg-white p-6 rounded-lg shadow">
+              <div className="flex justify-between items-start">
+                <div>
+                  <h2 className="text-xl font-semibold text-gray-900">{paper.title}</h2>
+                  <p className="text-gray-600 mt-2">{paper.authors.join(', ')}</p>
+                  <p className="text-gray-500 text-sm mt-1">{paper.year}</p>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => toggleFavorite(paper.id)}
+                    className="text-red-500 hover:text-red-600"
+                    title={paper.is_favorite ? "Remove from library" : "Add to library"}
+                  >
+                    {paper.is_favorite ? <FaHeart /> : <FaRegHeart />}
+                  </button>
+                  <button
+                    onClick={() => downloadPaper(paper.id)}
+                    className="text-[#4B8795] hover:text-[#407986]"
+                    title="Download paper"
+                  >
+                    <FaDownload />
+                  </button>
+                </div>
+              </div>
+              <p className="mt-4 text-gray-700">{paper.abstract}</p>
             </div>
           ))}
-          {results.length === 0 && (
-            <div className="text-center text-gray-500 py-8">
-              No results found. Try refining your query.
-            </div>
-          )}
         </div>
       </div>
     </div>
   );
 }
-
-export default Search;

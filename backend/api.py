@@ -5,21 +5,21 @@ import os
 from dotenv import load_dotenv
 from werkzeug.utils import secure_filename
 import logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-# Load environment variables from .env file
+from datetime import datetime
+from typing import Dict, Any, List, Optional
+
+# Load environment variables
 load_dotenv()
 
-# Import your orchestrator & ACP
-from backend.task_manager import ThesysOrchestrator
-from backend.agent_communication import AgentCommunicationProtocol
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-# Import your agents
-""" from agents.scholar_agent.agent import ScholarAgent
-from agents.factcheck_agent.agent import FactCheckAgent
-from agents.citation_agent.agent import CitationAgent
-from agents.context_agent.agent import ContextAgent """
+# Import agents
 from agents.scholar_agent.agent import ScholarAgent
+from agents.citation_agent.agent import CitationAgent
+from agents.factcheck_agent.agent import FactCheckAgent
+from agents.context_agent.agent import ContextAgent
 
 app = Flask(__name__)
 CORS(app)
@@ -35,444 +35,511 @@ def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 class ChatManager:
-    """
-    ChatManager glues everything together:
-     - The ThesysOrchestrator for single-step queries (like /api/chat).
-     - The AgentCommunicationProtocol for advanced multi-agent messaging (like /api/advanced_workflow).
-     - Storing chat sessions if needed.
-    """
-
     def __init__(self):
-        # Agents for orchestrator usage
+        self.logger = logging.getLogger(__name__)
+        
+        # Initialize agents
         self.scholar_agent = ScholarAgent()
-        """         self.fact_check_agent = FactCheckAgent()
         self.citation_agent = CitationAgent()
-        self.context_agent = ContextAgent() """
-
-        # Initialize orchestrator with these agents
-        self.orchestrator = ThesysOrchestrator([
-            self.scholar_agent,
-"""             self.fact_check_agent,
-            self.context_agent,
-            self.citation_agent """
-        ])
-
-        # ACP for advanced messaging
-        self.agent_protocol = AgentCommunicationProtocol([
-            self.scholar_agent,
-"""             self.fact_check_agent,
-            self.citation_agent,
-            self.context_agent """
-        ])
-
-        # Store chat sessions if you want to track history
+        self.factcheck_agent = FactCheckAgent()
+        self.context_agent = ContextAgent()
+        
+        # Store chat sessions
         self.chat_sessions = {}
 
-        # Initialize paper repository
-
-    def process_chat_message(self, message: str, chat_id: str):
-        """
-        Called by /api/chat for single-step usage:
-         1) We pass 'message' to orchestrator.execute_research_workflow
-         2) Or we handle minimal logic to store in chat_sessions
-        """
-        if chat_id not in self.chat_sessions:
-            self.chat_sessions[chat_id] = {
-                'messages': []
+    async def process_message(self, message: str, user_id: str) -> Dict[str, Any]:
+        """Process a message through all relevant agents."""
+        try:
+            self.logger.info(f"Processing message: {message}")
+            
+            # Get user context
+            context = self.context_agent.get_user_context(user_id)
+            self.logger.info(f"User context: {context}")
+            
+            # Fact-check the message
+            fact_check_result = self.factcheck_agent.verify_claim(message, context)
+            self.logger.info(f"Fact check result: {fact_check_result}")
+            
+            # Search for relevant papers
+            papers = await self.scholar_agent.search_papers(message)
+            self.logger.info(f"Found {len(papers)} papers")
+            
+            # Generate citations for found papers
+            citations = []
+            for paper in papers:
+                citation = self.citation_agent.generate_citation(paper, style='apa')
+                citations.append(citation)
+            self.logger.info(f"Generated {len(citations)} citations")
+            
+            # Save message to chat history
+            self.context_agent.add_to_chat_history(user_id, {
+                'role': 'user',
+                'content': message,
+                'timestamp': datetime.now().isoformat()
+            })
+            
+            # Prepare raw response data
+            raw_response = {
+                'papers': papers,
+                'citations': citations,
+                'fact_check': fact_check_result
+            }
+            
+            # Format response using OpenAI
+            formatted_response = await self._format_response_with_openai(message, raw_response)
+            self.logger.info(f"Formatted response: {formatted_response[:200]}...")  # Log first 200 chars
+            
+            # Prepare final response
+            response = {
+                'text': formatted_response,
+                'raw_data': raw_response
+            }
+            
+            # Save response to chat history
+            self.context_agent.add_to_chat_history(user_id, {
+            'role': 'assistant',
+                'content': response,
+                'timestamp': datetime.now().isoformat()
+            })
+            
+            return response
+            
+        except Exception as e:
+            self.logger.error(f"Error processing message: {str(e)}", exc_info=True)
+            return {
+                'error': str(e),
+                'text': "I encountered an error while processing your request. Please try again later.",
+                'raw_data': {
+                    'papers': [],
+                    'citations': [],
+                    'fact_check': None
+                }
             }
 
-        # store user message
-        self.chat_sessions[chat_id]['messages'].append({
-            'role': 'user',
-            'content': message
-        })
+    async def _format_response_with_openai(self, user_message: str, raw_data: Dict[str, Any]) -> str:
+        """Format the raw response data into human-readable text using OpenAI."""
+        try:
+            from openai import AsyncOpenAI
+            
+            # Initialize OpenAI client
+            client = AsyncOpenAI()
+            
+            # Prepare paper summaries
+            paper_summaries = []
+            for paper in raw_data['papers']:
+                summary = f"""
+                    Title: {paper['title']}
+                    Authors: {', '.join(paper['authors'])}
+                    Year: {paper['year']}
+                    Abstract: {paper['abstract']}
+                    Citations: {paper['citations']}
+                    URL: {paper['url']}
+                """
+                paper_summaries.append(summary)
+            
+            # Prepare the prompt
+            prompt = f"""Based on the user's query and the research findings, create a clear and concise response.
 
-        # call orchestrator
-        final_report = self.orchestrator.execute_research_workflow(message)
-        # final_report example:
-        # {
-        #   'summary': '...',
-        #   'citations': [...],
-        #   'sources': [...]
-        # }
+                        User Query: {user_message}
 
-        # store orchestrator result as an 'assistant' message
-        self.chat_sessions[chat_id]['messages'].append({
-            'role': 'assistant',
-            'content': final_report
-        })
+                        Research Papers Found:
+                        {chr(10).join(paper_summaries)}
 
-        # Return final_report as a simple user-facing response
-        return final_report
+                        Fact Check Result: {raw_data['fact_check']}
 
-    def run_advanced_flow(self, user_message: str):
-        """
-        Called by /api/advanced_workflow for multi-step usage with the ACP.
-        AgentCommunicationProtocol -> run_advanced_messaging_workflow
-        """
-        final_data = self.agent_protocol.run_advanced_messaging_workflow(user_message)
-        return final_data
+                        Please create a response that:
+                        1. Directly addresses the user's query
+                        2. Incorporates specific information from the research papers provided
+                        3. Cites specific papers when making claims
+                        4. Maintains academic rigor while being accessible
+                        5. Acknowledges any limitations or uncertainties in the research
+                        6. Uses the fact-checking results to validate or qualify statements
 
-# -----------------------------
-# Create global chat_manager
-# -----------------------------
+                        Format your response in a clear, structured way with:
+                        - An introduction that addresses the query
+                        - Main points supported by specific papers
+                        - Citations in APA format where appropriate
+                        - A conclusion that summarizes key findings
+
+                        Keep the response focused on the most relevant information from the provided papers."""
+
+            self.logger.info("Sending prompt to OpenAI")
+            
+            # Call OpenAI API
+            response = await client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {"role": "system", "content": "You are a scholarly research assistant that provides evidence-based responses using academic sources."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.7,
+                max_tokens=1000
+            )
+            
+            self.logger.info("Received response from OpenAI")
+            
+            # Get the generated response
+            gpt_response = response.choices[0].message.content
+            self.logger.info(f"GPT Response: {gpt_response[:200]}...")  # Log first 200 chars
+            
+            # Fact-check the generated response
+            fact_check_results = []
+            for paper in raw_data['papers']:
+                # Convert paper to string for fact-checking
+                paper_text = f"Title: {paper['title']}\nAbstract: {paper['abstract']}"
+                # Check claims against each paper
+                paper_check = self.factcheck_agent.verify_claim(gpt_response, paper_text)
+                if paper_check:  # Only add non-empty results
+                    fact_check_results.append(paper_check)
+            
+            self.logger.info(f"Fact check results: {fact_check_results}")
+            
+            # Add fact-checking summary to the response
+            if fact_check_results:
+                verified_response = f"""{gpt_response}
+
+                Fact-Checking Summary:
+                {chr(10).join([f"- {result}" for result in fact_check_results])}"""
+            else:
+                verified_response = gpt_response
+            
+            self.logger.info(f"Final response: {verified_response[:200]}...")  # Log first 200 chars
+            return verified_response
+            
+        except Exception as e:
+            self.logger.error(f"Error formatting response with OpenAI: {str(e)}", exc_info=True)
+            # Fallback to a simple formatted response
+            papers_text = "\n".join([f"- {paper['title']} ({paper['year']})" for paper in raw_data['papers']])
+            return f"""I found {len(raw_data['papers'])} relevant papers for your query: {papers_text} Fact check result: {raw_data['fact_check']}"""
+
+    def get_chat_history(self, user_id: str) -> List[Dict[str, Any]]:
+        """Get chat history for a user."""
+        try:
+            return self.context_agent._get_chat_history(user_id)
+        except Exception as e:
+            self.logger.error(f"Error getting chat history: {str(e)}")
+            return []
+
+    def clear_chat_history(self, user_id: str) -> bool:
+        """Clear chat history for a user."""
+        try:
+            return self.context_agent.save_chat_history(user_id, [])
+        except Exception as e:
+            self.logger.error(f"Error clearing chat history: {str(e)}")
+            return False
+
+    def verify_claim(self, claim: str, user_id: str) -> Dict[str, Any]:
+        """Verify a claim using the fact-checking agent."""
+        try:
+            context = self.context_agent.get_user_context(user_id)
+            return self.factcheck_agent.verify_claim(claim, context)
+        except Exception as e:
+            self.logger.error(f"Error verifying claim: {str(e)}")
+            return {'error': str(e)}
+
+    def search_papers(self, query: str, user_id: Optional[str] = None) -> Dict[str, Any]:
+        """Search for papers and generate citations."""
+        try:
+            # Search papers
+            papers = self.scholar_agent.search_papers(query)
+            
+            # Get user context if available
+            context = self.context_agent.get_user_context(user_id) if user_id else None
+            
+            # Generate citations
+            citations = []
+            for paper in papers:
+                citation = self.citation_agent.generate_citation(paper, style='apa')
+                citations.append(citation)
+            
+            return {
+                'papers': papers,
+                'citations': citations,
+                'context': context
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error searching papers: {str(e)}")
+            return {'error': str(e)}
+
+    def generate_citation(self, source: Dict[str, Any], style: str = 'apa') -> str:
+        """Generate a citation for a source."""
+        try:
+            return self.citation_agent.generate_citation(source, style)
+        except Exception as e:
+            self.logger.error(f"Error generating citation: {str(e)}")
+            return "Citation unavailable"
+
+# Create global chat manager instance
 chat_manager = ChatManager()
 
 @app.route('/api/chat', methods=['POST'])
-def handle_chat():
-    """
-    Single-step usage: 
-    1) Takes user's 'message'
-    2) chat_id is optional in the request
-    3) calls chat_manager.process_chat_message => orchestrator
-    4) returns final orchestrator result
-    """
-    data = request.json
-    if not data or 'message' not in data:
-        return jsonify({'error': 'Invalid request, "message" is required'}), 400
-
-    chat_id = data.get('chatId', str(uuid.uuid4()))
-    message_text = data['message']
-
+async def chat():
+    """Enhanced chat endpoint that coordinates between multiple agents."""
     try:
-        response_data = chat_manager.process_chat_message(message_text, chat_id)
-        return jsonify({
-            'message': response_data,
-            'chatId': chat_id
-        })
-    except Exception as e:
-        return jsonify({
-            'error': f'Error handling chat: {str(e)}',
-            'chatId': chat_id
-        }), 500
-
-@app.route('/api/advanced_workflow', methods=['POST'])
-def advanced_workflow():
-    """
-    Multi-step usage with advanced agent messaging flow:
-    1) user sends "message"
-    2) we call chat_manager.run_advanced_flow
-    3) returns final aggregated multi-agent result
-    """
-    data = request.json
-    if not data or 'message' not in data:
-        return jsonify({'error': 'Invalid request, "message" is required'}), 400
-
-    user_message = data['message']
-    try:
-        final_data = chat_manager.run_advanced_flow(user_message)
-        return jsonify(final_data)
-    except Exception as e:
-        return jsonify({
-            'error': str(e)
-        }), 500
-
-@app.route('/api/chats', methods=['GET'])
-def get_chat_sessions():
-    """
-    Retrieve all active chat sessions
-    """
-    return jsonify({
-        'chats': list(chat_manager.chat_sessions.keys())
-    })
-
-@app.route('/api/chat/<chat_id>', methods=['GET'])
-def get_chat_history(chat_id):
-    """
-    Retrieve history for a specific chat session
-    """
-    session = chat_manager.chat_sessions.get(chat_id)
-    if not session:
-        return jsonify({'error': 'Chat session not found'}), 404
-    return jsonify({
-        'chatId': chat_id,
-        'messages': session['messages']
-    })
-
-@app.route('/api/papers/search', methods=['POST'])
-async def search_papers():
-    try:
-        data = request.get_json()
-        query = data.get('query')
-        limit = data.get('limit', 10)
-        offset = data.get('offset', 0)
-        
-        if not query:
-            return jsonify({
-                'status': 'error',
-                'message': 'Query parameter is required'
-            }), 400
+        data = request.json
+        if not data:
+            logger.error("No JSON data received")
+            return jsonify({'error': 'No data provided'}), 400
             
-        result = await chat_manager.scholar_agent.search_papers(query, limit)
-        return jsonify({
-            'status': 'success',
-            'papers': result,
-            'total': len(result)
-        })
+        message = data.get('message', '')
+        if not message:
+            logger.error("No message provided")
+            return jsonify({'error': 'Message is required'}), 400
+            
+        # Generate a temporary user_id if not provided
+        user_id = data.get('user_id', str(uuid.uuid4()))
+        logger.info(f"Processing message for user {user_id}: {message[:100]}...")
+        
+        # Process message through chat manager
+        response = await chat_manager.process_message(message, user_id)
+        
+        if 'error' in response:
+            logger.error(f"Error processing message: {response['error']}")
+            return jsonify(response), 500
+            
+        return jsonify(response)
         
     except Exception as e:
-        return jsonify({
-            'status': 'error',
-            'message': str(e)
-        }), 500
+        logger.error(f"Error in chat endpoint: {str(e)}", exc_info=True)
+        return jsonify({'error': 'Internal server error'}), 500
 
-@app.route('/api/papers/<paper_id>', methods=['GET'])
-async def get_paper_details(paper_id):
+@app.route('/api/factcheck', methods=['POST'])
+def factcheck():
+    """Endpoint for fact-checking claims."""
     try:
-        result = await chat_manager.scholar_agent.get_paper_details(paper_id)
+        data = request.json
+        claim = data.get('claim')
+        user_id = data.get('user_id')
+        
+        if not claim:
+            return jsonify({'error': 'Claim is required'}), 400
+        
+        # Verify claim using chat manager
+        result = chat_manager.verify_claim(claim, user_id)
+        
         return jsonify(result)
         
     except Exception as e:
-        return jsonify({
-            'status': 'error',
-            'message': str(e)
-        }), 500
+        logger.error(f"Error in factcheck endpoint: {str(e)}")
+        return jsonify({'error': str(e)}), 500
 
-@app.route('/api/papers/<paper_id>/pdf', methods=['GET'])
-def get_paper_pdf(paper_id):
+@app.route('/api/citations', methods=['POST'])
+def generate_citation():
+    """Endpoint for generating citations."""
     try:
-        url = chat_manager.scholar_agent.get_paper_url(paper_id)
-        if url:
-            return jsonify({
-                'status': 'success',
-                'url': url
-            })
-        return jsonify({
-            'status': 'error',
-            'message': 'PDF not found'
-        }), 404
+        data = request.json
+        source = data.get('source')
+        style = data.get('style', 'apa')
+        
+        if not source:
+            return jsonify({'error': 'Source is required'}), 400
+        
+        # Generate citation using chat manager
+        citation = chat_manager.generate_citation(source, style)
+        
+        return jsonify({'citation': citation})
         
     except Exception as e:
-        return jsonify({
-            'status': 'error',
-            'message': str(e)
-        }), 500
+        logger.error(f"Error in citations endpoint: {str(e)}")
+        return jsonify({'error': str(e)}), 500
 
-@app.route('/api/library/search', methods=['POST'])
-async def search_library():
+@app.route('/api/papers/search', methods=['POST'])
+def search_papers():
+    """Endpoint for searching papers."""
     try:
-        data = request.get_json()
+        data = request.json
         query = data.get('query')
-        user_id = data.get('user_id')  # This should come from the authenticated user's session
-        limit = data.get('limit', 10)
+        user_id = data.get('user_id')
         
         if not query:
-            return jsonify({
-                'status': 'error',
-                'message': 'Query parameter is required'
-            }), 400
-            
-        if not user_id:
-            return jsonify({
-                'status': 'error',
-                'message': 'User ID is required'
-            }), 400
-            
-        result = await chat_manager.scholar_agent.search_user_library(query, user_id, limit)
-        return jsonify({
-            'status': 'success',
-            'papers': result,
-            'total': len(result)
-        })
+            return jsonify({'error': 'Query is required'}), 400
+        
+        # Search papers using chat manager
+        result = chat_manager.search_papers(query, user_id)
+        
+        return jsonify(result)
         
     except Exception as e:
-        return jsonify({
-            'status': 'error',
-            'message': str(e)
-        }), 500
+        logger.error(f"Error in search_papers endpoint: {str(e)}")
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/papers/upload', methods=['POST'])
 async def upload_paper():
+    """Endpoint for uploading papers."""
     try:
-        logger.info("Starting file upload process")
-        
-        # Check if file is present in request
         if 'file' not in request.files:
-            logger.error("No file part in request")
-            return jsonify({
-                'status': 'error',
-                'message': 'No file part in request'
-            }), 400
+            logger.error("No file provided in request")
+            return jsonify({'error': 'No file provided'}), 400
             
         file = request.files['file']
-        logger.info(f"Received file: {file.filename}")
-        
-        # Validate file
-        if not file or file.filename == '':
-            logger.error("No file selected")
-            return jsonify({
-                'status': 'error',
-                'message': 'No file selected'
-            }), 400
-            
-        # Get user ID from form data
         user_id = request.form.get('user_id')
-        logger.info(f"User ID from request: {user_id}")
         
         if not user_id:
-            logger.error("No user ID provided")
-            return jsonify({
-                'status': 'error',
-                'message': 'User ID is required'
-            }), 400
+            logger.error("User ID is required")
+            return jsonify({'error': 'User ID is required'}), 400
             
-        # Read file data
-        try:
-            logger.info("Attempting to read file data")
-            file_data = file.read()
-            logger.info(f"File data length: {len(file_data) if file_data else 0}")
+        if not file.filename:
+            logger.error("No filename provided")
+            return jsonify({'error': 'No filename provided'}), 400
             
-            if not file_data:
-                logger.error("File is empty")
-                return jsonify({
-                    'status': 'error',
-                    'message': 'File is empty'
-                }), 400
-        except Exception as e:
-            logger.error(f"Error reading file: {str(e)}")
-            return jsonify({
-                'status': 'error',
-                'message': f'Error reading file: {str(e)}'
-            }), 400
-            
-        # Get file metadata
+        # Get file type from content type or extension
+        file_type = file.content_type or 'application/pdf'  # Default to PDF if not specified
         file_name = secure_filename(file.filename)
-        file_type = file.content_type or 'application/octet-stream'
-        logger.info(f"File metadata - Name: {file_name}, Type: {file_type}")
         
-        # Upload file
-        logger.info("Calling scholar_agent.upload_paper")
+        # Read file data
+        file_data = file.read()
+        
+        # Upload paper using scholar agent
         result = await chat_manager.scholar_agent.upload_paper(
             user_id=user_id,
             file_data=file_data,
             file_name=file_name,
             file_type=file_type
         )
-        logger.info(f"Upload result: {result}")
         
-        if result['status'] == 'success':
-            return jsonify(result)
-        else:
-            logger.error(f"Upload failed: {result}")
+        if 'error' in result:
+            logger.error(f"Error uploading paper: {result['error']}")
             return jsonify(result), 500
             
+        return jsonify(result)
+        
     except Exception as e:
         logger.error(f"Error in upload_paper endpoint: {str(e)}", exc_info=True)
-        return jsonify({
-            'status': 'error',
-            'message': f'An unexpected error occurred: {str(e)}'
-        }), 500
+        return jsonify({'error': str(e)}), 500
 
-@app.route('/api/papers/<paper_id>/content', methods=['GET'])
-async def get_paper_content(paper_id):
+@app.route('/api/library/files', methods=['GET', 'POST'])
+def get_user_files():
+    """Get all files in a user's library."""
     try:
-        # Get user ID from session (you'll need to implement proper authentication)
-        user_id = request.args.get('user_id')
-        if not user_id:
-            return jsonify({
-                'status': 'error',
-                'message': 'User ID is required'
-            }), 400
-            
-        result = await chat_manager.scholar_agent.get_uploaded_paper(user_id, paper_id)
+        # For GET requests, get user_id from query params
+        # For POST requests, get user_id from JSON body
+        user_id = request.args.get('user_id') if request.method == 'GET' else request.json.get('user_id')
         
-        if result['status'] == 'success':
-            return jsonify(result)
-        else:
-            return jsonify(result), 404
+        if not user_id:
+            logger.error("User ID is required")
+            return jsonify({'error': 'User ID is required'}), 400
             
-    except Exception as e:
-        return jsonify({
-            'status': 'error',
-            'message': str(e)
-        }), 500
-
-@app.route('/api/library/files', methods=['POST'])
-async def get_user_files():
-    try:
-        data = request.get_json()
-        if not data or 'user_id' not in data:
-            return jsonify({
-                'status': 'error',
-                'message': 'User ID is required'
-            }), 400
-            
-        user_id = data['user_id']
         files = chat_manager.scholar_agent.get_user_library_files(user_id)
+        
+        if not files:
+            logger.warning(f"No files found for user {user_id}")
+            return jsonify({'files': []})
+            
+        logger.info(f"Found {len(files)} files for user {user_id}")
+        
+        # Ensure each file has all required fields
+        processed_files = []
+        for file in files:
+            processed_file = {
+                'id': file.get('id', ''),
+                'file_name': file.get('file_name', ''),
+                'file_type': file.get('file_type', 'application/octet-stream'),
+                'created_at': file.get('created_at', ''),
+                'url': file.get('url', '')
+            }
+            processed_files.append(processed_file)
         
         return jsonify({
             'status': 'success',
-            'files': files
+            'files': processed_files
         })
         
     except Exception as e:
-        logger.error(f"Error getting user files: {str(e)}", exc_info=True)
+        logger.error(f"Error in get_user_files endpoint: {str(e)}", exc_info=True)
         return jsonify({
             'status': 'error',
-            'message': 'Error retrieving files'
+            'error': str(e)
         }), 500
 
-@app.route('/api/library/files/<file_id>', methods=['POST'])
-async def get_file_details(file_id):
+@app.route('/api/library/files/<file_id>', methods=['GET', 'POST'])
+def get_file_details(file_id):
+    """Get details of a specific file."""
     try:
-        data = request.get_json()
-        user_id = data.get('user_id')
+        # For GET requests, get user_id from query params
+        # For POST requests, get user_id from JSON body
+        user_id = request.args.get('user_id') if request.method == 'GET' else request.json.get('user_id')
         
         if not user_id:
-            return jsonify({
-                'status': 'error',
-                'message': 'User ID is required'
-            }), 400
+            logger.error("User ID is required")
+            return jsonify({'error': 'User ID is required'}), 400
             
         file_details = chat_manager.scholar_agent.get_file_details(user_id, file_id)
+        
         if not file_details:
-            return jsonify({
-                'status': 'error',
-                'message': 'File not found'
-            }), 404
+            logger.warning(f"File {file_id} not found for user {user_id}")
+            return jsonify({'error': 'File not found'}), 404
             
+        logger.info(f"Found file details for {file_id}")
         return jsonify({
             'status': 'success',
             'file': file_details
         })
         
     except Exception as e:
+        logger.error(f"Error in get_file_details endpoint: {str(e)}", exc_info=True)
         return jsonify({
             'status': 'error',
-            'message': str(e)
+            'error': str(e)
         }), 500
 
-@app.route('/api/library/files/<file_id>/delete', methods=['POST'])
-async def delete_file(file_id):
+@app.route('/api/library/files/<file_id>/delete', methods=['DELETE'])
+def delete_file(file_id):
+    """Delete a file from the user's library."""
     try:
-        data = request.get_json()
+        user_id = request.args.get('user_id')
+        
+        if not user_id:
+            return jsonify({'error': 'User ID is required'}), 400
+            
+        success = chat_manager.scholar_agent.delete_file(user_id, file_id)
+        
+        if not success:
+            return jsonify({'error': 'Failed to delete file'}), 500
+            
+        return jsonify({'message': 'File deleted successfully'})
+        
+    except Exception as e:
+        logger.error(f"Error in delete_file endpoint: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/chat/history', methods=['GET'])
+def get_chat_history():
+    """Get chat history for a user."""
+    try:
+        user_id = request.args.get('user_id')
+        
+        if not user_id:
+            return jsonify({'error': 'User ID is required'}), 400
+            
+        history = chat_manager.get_chat_history(user_id)
+        
+        return jsonify({'history': history})
+        
+    except Exception as e:
+        logger.error(f"Error in get_chat_history endpoint: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/chat/history/clear', methods=['POST'])
+def clear_chat_history():
+    """Clear chat history for a user."""
+    try:
+        data = request.json
         user_id = data.get('user_id')
         
         if not user_id:
-            return jsonify({
-                'status': 'error',
-                'message': 'User ID is required'
-            }), 400
+            return jsonify({'error': 'User ID is required'}), 400
             
-        success = chat_manager.scholar_agent.delete_file(user_id, file_id)
+        success = chat_manager.clear_chat_history(user_id)
+        
         if not success:
-            return jsonify({
-                'status': 'error',
-                'message': 'Failed to delete file'
-            }), 500
+            return jsonify({'error': 'Failed to clear chat history'}), 500
             
-        return jsonify({
-            'status': 'success',
-            'message': 'File deleted successfully'
-        })
+        return jsonify({'message': 'Chat history cleared successfully'})
         
     except Exception as e:
-        return jsonify({
-            'status': 'error',
-            'message': str(e)
-        }), 500
+        logger.error(f"Error in clear_chat_history endpoint: {str(e)}")
+        return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
-    # This ensures the app runs with debug on port 5000 
-    # or whatever you like
     app.run(debug=True, port=5000)

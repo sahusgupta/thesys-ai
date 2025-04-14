@@ -1,17 +1,25 @@
 // src/pages/Dashboard.jsx
 import React from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
 import {
   HomeIcon,
-  UploadIcon,
+  SearchIcon,
   ChatAltIcon,        // <-- Chat bubble icon from Heroicons v1
   CollectionIcon,
-  CogIcon
+  CogIcon,
+  UserIcon,
+  ViewGridIcon
 } from '@heroicons/react/outline';
 
 export default function Dashboard() {
+  const navigate = useNavigate();
+  const { user } = useAuth();
+  const location = useLocation();
+
   return (
     <div className="min-h-screen flex bg-gray-50 text-gray-900">
+
       {/* Sidebar */}
       <aside className="hidden md:flex md:flex-col w-64 bg-white border-r border-gray-200">
         {/* Brand / Logo Section */}
@@ -32,12 +40,13 @@ export default function Dashboard() {
 
         {/* Nav items */}
         <nav className="flex-1 p-4 space-y-1">
-          <NavItem route="/dashboard" label="Home" Icon={HomeIcon} />
-          <NavItem route="/upload" label="Upload" Icon={UploadIcon} />
-          {/* Replaced Summarize / FactCheck / Citations with Chat */}
-          <NavItem route="/chat" label="Chat" Icon={ChatAltIcon} />
-          <NavItem route="/library" label="Library" Icon={CollectionIcon} />
-          <NavItem route="/settings" label="Settings" Icon={CogIcon} />
+          <NavItem route="/" label="Home" Icon={HomeIcon} currentPath={location.pathname} />
+          <NavItem route="/dashboard" label="Dashboard" Icon={ViewGridIcon} currentPath={location.pathname} />
+          <NavItem route="/search" label="Search" Icon={SearchIcon} currentPath={location.pathname} />
+          <NavItem route="/chat" label="Chat" Icon={ChatAltIcon} currentPath={location.pathname} />
+          <NavItem route="/library" label="Library" Icon={CollectionIcon} currentPath={location.pathname} />
+          <NavItem route="/settings" label="Settings" Icon={CogIcon} currentPath={location.pathname} />
+          <NavItem route="/profile" label="Profile" Icon={UserIcon} currentPath={location.pathname} />
         </nav>
       </aside>
 
@@ -80,7 +89,7 @@ export default function Dashboard() {
               </h2>
               <p className="text-sm mt-1 text-gray-700 max-w-lg">
                 Accelerate your research with instant summaries, fact-checking, and citation management.
-                Here’s how you can get started:
+                Here's how you can get started:
               </p>
               <ol className="list-decimal list-inside text-xs mt-2 text-gray-600 space-y-1">
                 <li>Upload a document (see sidebar).</li>
@@ -105,9 +114,9 @@ export default function Dashboard() {
         <div className="bg-white border rounded-md p-4 hover:shadow transition">
           <h3 className="text-sm text-gray-800 font-bold mb-2">Recent Activity</h3>
           <ul className="text-xs text-gray-600 space-y-1">
-            <li>- Chat session: “AI in Healthcare Summaries” (10 mins ago)</li>
-            <li>- “Is GPT-4 100% accurate?” (Explored in chat, 25 mins ago)</li>
-            <li>- “Deep Learning Paper” successfully uploaded.</li>
+            <li>- Chat session: "AI in Healthcare Summaries" (10 mins ago)</li>
+            <li>- "Is GPT-4 100% accurate?" (Explored in chat, 25 mins ago)</li>
+            <li>- "Deep Learning Paper" successfully uploaded.</li>
           </ul>
         </div>
       </main>
@@ -119,14 +128,18 @@ export default function Dashboard() {
   Sub-components: NavItem and StatsCard 
 */
 
-function NavItem({ route, label, Icon }) {
+function NavItem({ route, label, Icon, currentPath }) {
   return (
     <Link
       to={route}
-      className="no-underline block text-sm text-gray-700 py-2 px-2 rounded hover:bg-gray-100 transition flex items-center gap-2"
+      className={`flex items-center px-4 py-2 text-sm font-medium rounded-md ${
+        currentPath === route
+          ? 'bg-gray-100 text-[#4B8795]'
+          : 'text-gray-600 hover:bg-gray-50 hover:text-[#4B8795]'
+      }`}
     >
-      {Icon && <Icon className="h-5 w-5 text-[#4B8795]" />}
-      <span>{label}</span>
+      <Icon className="mr-3 h-5 w-5" />
+      {label}
     </Link>
   );
 }
