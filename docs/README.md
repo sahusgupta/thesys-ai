@@ -1,116 +1,47 @@
-🚀 Thesys: AI-Powered Research Assistant
-Hackathon Submission for Fetch.ai AI Agents Hackathon
-🔥 Innovative, AI-driven multi-agent research assistant leveraging Fetch.ai’s ecosystem for real-time research automation, fact-checking, and citation generation.
+<div align="center">
+  <h1>Thesys</h1>
+  <p><em>AI-Powered Research Assistant</em></p>
+  
+  [![Status](https://img.shields.io/badge/Status-Active-4361EE?style=flat-square)](https://github.com)
+  [![Python](https://img.shields.io/badge/Python-3.8+-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org)
+  
+  <p>Transform your research workflow with intelligent AI assistance</p>
+</div>
 
-📌 Overview
-Thesys is an intelligent research assistant that automates document summarization, fact verification, citation generation, and knowledge retrieval by integrating Fetch.ai's Agentverse with advanced AI models.
+## Overview
 
-💡 What Makes Thesys Unique?
-✅ Multi-Agent Research Workflow – Fetch.ai-based AI Agents collaborate dynamically.
-✅ Real-Time Fact-Checking – Ensures information credibility & bias detection.
-✅ Adaptive Summarization – AI adjusts summary depth based on user needs.
-✅ AI-Powered Citation Generation – Automatically formats references (APA, MLA, IEEE).
-✅ Fetch.ai Search & Discovery Integration – Enables interaction with specialized research agents.
+Thesys revolutionizes document research by combining Fetch.ai's ecosystem with advanced AI technologies. Our platform streamlines information processing, verification, and presentation to enhance research quality and efficiency.
 
-🎯 Key Features & Architecture
-🔹 1️⃣ Multi-Agent Research Workflow (Fetch.ai + LLMs)
-🚀 What Makes It Unique:
+## Capabilities
 
-Unlike standard research assistants, Thesys collaborates with multiple AI Agents dynamically.
-Uses Fetch.ai’s Agentverse to connect with specialized agents for fact-checking, data retrieval, academic citation, and summarization.
-💡 Execution:
+- **Document Analysis** — Process and understand complex research materials
+- **Fact Verification** — Ensure information reliability and accuracy
+- **Citation Support** — Streamline reference management in APA, MLA, and IEEE formats
+- **Smart Summarization** — Get customized insights tailored to your needs
+- **Report Generation** — Create structured documents from your research
 
-User submits a research query or uploads a document.
-Thesys activates the following Fetch.ai Agents:
-Scholar Agent: Fetches academic papers & research reports.
-FactCheck Agent: Cross-verifies information across credible databases (Semantic Scholar, CrossRef, Google Fact Check).
-Context Agent: Enhances research by providing historical, industry-specific, or scientific background.
-Citation Agent: Generates formatted citations (APA, MLA, IEEE) dynamically.
-Agents collaborate & return a fully synthesized, AI-validated research summary.
-🔧 Tech Stack:
-✅ Fetch.ai’s uAgents Framework (for multi-agent interactions).
-✅ LangChain + Autogen (for agent coordination).
-✅ CrossRef API + Google Scholar API (for academic data retrieval).
+## Key Features
 
-📑 2️⃣ Real-Time Fact-Checking & Source Ranking
-🚀 What Makes It Unique:
+### Collaborative Research Workflow
+Dynamic research assistance powered by Fetch.ai's agent ecosystem with seamless coordination between specialized research components.
 
-Most AI tools blindly generate content without checking credibility.
-Thesys validates every claim in real-time by dynamically ranking sources.
-💡 Execution:
+### Information Quality Assurance
+Source credibility assessment with content verification against trusted databases and publication evaluation.
 
-User submits a research topic or pastes content.
-Thesys scans multiple sources & ranks them based on:
-Credibility (Peer-reviewed journals > Wikipedia > News sites).
-Bias detection (Left/right-wing media, corporate interests).
-Publication recency & citation count.
-AI highlights any inconsistencies & suggests corrections.
-🔧 Tech Stack:
-✅ Web Scraping: Scrapy + BeautifulSoup (for real-time data fetching).
-✅ Bias Analysis: OpenAI GPT-4 fine-tuned with media credibility scoring.
-✅ RAG (Retrieval-Augmented Generation): Ensures AI only uses verified information.
+### Adaptive Content Processing
+Context-aware document analysis with customizable output formats for scientific papers, business reports, legal documents, and academic research.
 
-📝 3️⃣ Adaptive Summarization (Not Just GPT Summaries)
-🚀 What Makes It Unique:
+### Professional Output Generation
+Generate structured research reports, properly formatted academic documents, and maintain an editable research workspace.
 
-Unlike basic GPT-based summarization, Thesys adapts output style & depth based on the research type.
-Uses multi-layered synthesis—AI doesn’t just summarize, it contextualizes.
-💡 Execution:
+### Fetch.ai Ecosystem Integration
+Access specialized research capabilities across finance, healthcare, legal and other domains with continuous knowledge enhancement.
 
-User specifies research type:
-Scientific Paper → Detailed technical summary
-Business Report → Executive-style summary
-Legal Case → Bullet-point analysis
-Thesys processes document & generates:
-Structured insights (Key findings, methodology, contradictions).
-AI-generated Q&A for further exploration.
-Thesys then refines the output through interaction with Fetch.ai Agents.
-🔧 Tech Stack:
-✅ SpaCy + NLTK + GPT-4 API (for NLP-based summarization).
-✅ FAISS + Pinecone (for document segmentation & retrieval).
-✅ Fetch.ai Agent Integration (to cross-check document data).
+## Maintainer
 
-📚 4️⃣ AI Research Report Generator (Structured PDF Output)
-🚀 What Makes It Unique:
+**Sahus Gupta**  
+[sahusgupta@gmail.com](mailto:sahusgupta@gmail.com) | [LinkedIn](https://www.linkedin.com/in/sahus-gupta-14495127b/)
 
-Users don’t just get summaries—they receive a structured AI-generated research report.
-AI auto-generates formatted documents based on the user’s topic & academic level.
-💡 Execution:
-
-User enters topic → Thesys searches & organizes relevant sources.
-AI generates a structured PDF research report:
-Title Page (AI-generated)
-Abstract (Summarized findings)
-Body (Section-based breakdown)
-AI-generated citations & bibliography
-User receives report as PDF/Word & editable research workspace.
-🔧 Tech Stack:
-✅ LaTeX + Pandoc (for academic PDF generation).
-✅ PyMuPDF + DocxWriter (for dynamic document formatting).
-✅ **Fetch.ai Agent Integration for knowledge refinement.
-
-🔗 5️⃣ Fetch.ai Agentverse Search & Discovery Integration
-🚀 What Makes It Unique:
-
-Judges expect Fetch.ai integration—Thesys goes beyond by making AI research collaborative.
-Instead of just generating research from pre-built sources, Thesys lets users discover AI Agents that specialize in their topic.
-💡 Execution:
-
-User submits research topic → Thesys searches Agentverse for relevant AI Agents.
-Thesys dynamically connects with:
-AI-powered investment research agents (for financial topics).
-Medical research agents (for healthcare topics).
-Legal AI agents (for case law analysis).
-**AI continuously updates its research findings based on new Fetch.ai discoveries.
-🔧 Tech Stack:
-✅ Fetch.ai SDK + uAgents (for discovering & interacting with AI Agents).
-✅ FastAPI Backend (for handling multi-agent queries).
-✅ FAISS + Pinecone (for intelligent knowledge retrieval).
-
-🚀 Thesys is redefining AI-powered research—join me on this journey!
-
-📌 Maintainers: Sahus Gupta | sahusgupta@gmail.com | https://www.linkedin.com/in/sahus-gupta-14495127b/
-
-DISCLAIMER: For the protection of my intellectual property, I won't publicly detail proprietary methods relating to multi-agent communication, fact-checking, and context management. 
-
-![tag : innovation-lab](https://img.shields.io/badge/innovation--lab-3D8BD3)
+<div align="center">
+  <sub>Built with ❤️ using Fetch.ai technology</sub>
+</div>

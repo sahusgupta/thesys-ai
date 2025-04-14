@@ -12,6 +12,7 @@ import Home from './pages/Home';
 import Search from './pages/Search';
 import Settings from './pages/Settings';
 import Profile from './pages/Profile';
+import PaperSearch from './pages/PaperSearch';
 
 function App() {
   return (
