@@ -6,6 +6,7 @@ from datetime import datetime
 import json
 import re
 import os
+import tiktoken
 
 class FactCheckAgent:
     """
@@ -16,10 +17,32 @@ class FactCheckAgent:
      - 'verify_information(...)' merges or modifies data from other agents
     """
     def __init__(self):
+        self.tokenizer = tiktoken.get_encoding("cl100k_base")
+        self.MAX_TOKENS = 900
         self.logger = logging.getLogger(__name__)
         self.semantic_scholar_api = "https://api.semanticscholar.org/graph/v1"
         self.arxiv_api = "http://export.arxiv.org/api/query"
         self.news_api = "https://newsapi.org/v2/everything"
+
+    def truncate_to_token_limit(self, text):
+        if not isinstance(text, str):
+            return text
+        tokens = self.tokenizer.encode(text)
+        if len(tokens) > self.MAX_TOKENS:
+            truncated_tokens = tokens[:self.MAX_TOKENS]
+            return self.tokenizer.decode(truncated_tokens) + "..."
+        return text
+
+    def extract_text_from_claim(self, claim):
+        """Extract text content from claim object or return claim if it's a string"""
+        if isinstance(claim, dict):
+            # Try common keys that might contain the text
+            for key in ['content', 'text', 'message', 'claim']:
+                if key in claim and isinstance(claim[key], str):
+                    return claim[key]
+            # If no text found, convert the whole dict to string
+            return str(claim)
+        return str(claim)
 
     def process_query(self, query: str) -> Dict[str, Any]:
         """
@@ -174,6 +197,13 @@ class FactCheckAgent:
     def _analyze_against_context(self, claim: str, context: Dict[str, Any]) -> Dict[str, Any]:
         """Analyze claim against provided context."""
         try:
+            # Make sure context is a dictionary before using get()
+            if isinstance(context, str):
+                context = {'text': context}
+            
+            # Now safely use get()
+            text = context.get('text', '')
+            
             # Extract relevant information from context
             user_papers = context.get('papers', [])
             chat_history = context.get('chat_history', [])
@@ -298,10 +328,116 @@ class FactCheckAgent:
     def _text_contains_claim(self, text: str, claim: str) -> bool:
         """Check if text contains the claim."""
         try:
+            # Ensure inputs are strings before proceeding
+            if not isinstance(text, str):
+                self.logger.warning(f"_text_contains_claim received non-string text: type={type(text)}, value={text}")
+                text = str(text) # Attempt conversion, or return False
+            if not isinstance(claim, str):
+                self.logger.warning(f"_text_contains_claim received non-string claim: type={type(claim)}, value={claim}")
+                claim = str(claim) # Attempt conversion, or return False
+
             # Simple keyword matching - could be enhanced with NLP
             claim_words = set(claim.lower().split())
             text_words = set(text.lower().split())
-            return len(claim_words.intersection(text_words)) >= len(claim_words) * 0.5
+            # Handle empty claim case
+            if not claim_words:
+                return False
+            # Check for significant overlap
+            return len(claim_words.intersection(text_words)) >= max(1, len(claim_words) * 0.5)
         except Exception as e:
             self.logger.error(f"Error checking text for claim: {str(e)}")
             return False
+
+    def analyze_context(self, claim, context):
+        try:
+            # Ensure claim is a string
+            claim_text = claim.get('content', '') if isinstance(claim, dict) else str(claim)
+            
+            # Initialize response structure
+            response = {
+                'papers': [],
+                'news': [],
+                'context_analysis': {
+                    'paper_matches': [],
+                    'chat_matches': []
+                }
+            }
+
+            # Extract and validate context
+            if not context or not isinstance(context, dict):
+                self.logger.warning("Invalid or empty context provided")
+                return response
+
+            # Process papers if available
+            papers = context.get('papers', [])
+            if isinstance(papers, list):
+                for paper in papers:
+                    if not isinstance(paper, dict):
+                        continue
+                    # Process paper content safely
+                    title = str(paper.get('title', ''))
+                    abstract = str(paper.get('abstract', ''))
+                    if self._text_matches(claim_text, title) or self._text_matches(claim_text, abstract):
+                        response['papers'].append(paper)
+
+            # Process chat history if available
+            chat_history = context.get('chat_history', [])
+            if isinstance(chat_history, list):
+                for msg in chat_history:
+                    if not isinstance(msg, dict):
+                        continue
+                    # Process message content safely
+                    content = str(msg.get('content', ''))
+                    if self._text_matches(claim_text, content):
+                        response['context_analysis']['chat_matches'].append(msg)
+
+            return response
+
+        except Exception as e:
+            self.logger.error(f"Error analyzing context: {str(e)}")
+            return {}
+
+    def _text_matches(self, text1, text2):
+        """Safely compare two texts for matching content"""
+        try:
+            if not isinstance(text1, str) or not isinstance(text2, str):
+                return False
+            
+            # Convert both to lowercase strings for comparison
+            text1_lower = text1.lower()
+            text2_lower = text2.lower()
+            
+            # Simple matching logic - can be enhanced
+            return text1_lower in text2_lower or text2_lower in text1_lower
+            
+        except Exception as e:
+            self.logger.error(f"Error in text matching: {str(e)}")
+            return False
+
+    def check_claim(self, claim, context=None):
+        """Check a claim against available context"""
+        try:
+            # Ensure claim is properly formatted
+            if isinstance(claim, dict):
+                claim_text = claim.get('content', '')
+            else:
+                claim_text = str(claim)
+
+            # Initialize response
+            response = {
+                'claim': claim_text,
+                'status': 'unverified',
+                'evidence': self.analyze_context(claim_text, context),
+                'timestamp': datetime.now().isoformat()
+            }
+
+            return response
+
+        except Exception as e:
+            self.logger.error(f"Error checking claim: {str(e)}")
+            return {
+                'claim': str(claim),
+                'status': 'error',
+                'evidence': {},
+                'timestamp': datetime.now().isoformat()
+            }

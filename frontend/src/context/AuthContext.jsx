@@ -22,6 +22,7 @@ export function useAuth() {
 export function AuthProvider({ children }) {
   const [currentUser, setCurrentUser] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
   function signup(email, password) {
     return createUserWithEmailAndPassword(auth, email, password);
@@ -31,9 +32,19 @@ export function AuthProvider({ children }) {
     return signInWithEmailAndPassword(auth, email, password);
   }
 
-  function loginWithGoogle() {
-    const provider = new GoogleAuthProvider();
-    return signInWithPopup(auth, provider);
+  async function loginWithGoogle() {
+    try {
+      setError(null);
+      const provider = new GoogleAuthProvider();
+      const result = await signInWithPopup(auth, provider);
+      // Debug the result
+      console.log('Google Sign-in Result:', result);
+      return result;
+    } catch (err) {
+      console.error('Google Sign-in Error:', err);
+      setError(err.message);
+      throw err;
+    }
   }
 
   function logout() {
@@ -67,6 +78,7 @@ export function AuthProvider({ children }) {
 
   const value = {
     currentUser,
+    error,
     signup,
     login,
     loginWithGoogle,

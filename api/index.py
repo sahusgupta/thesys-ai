@@ -16,10 +16,23 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Import agents
-from agents.scholar_agent.agent import ScholarAgent
-from agents.citation_agent.agent import CitationAgent
-from agents.factcheck_agent.agent import FactCheckAgent
-from agents.context_agent.agent import ContextAgent
+try:
+    from agents.scholar_agent.agent import ScholarAgent
+    from agents.citation_agent.agent import CitationAgent
+    from agents.factcheck_agent.agent import FactCheckAgent
+    from agents.context_agent.agent import ContextAgent
+except ModuleNotFoundError:
+    # Add the project root directory to the Python path
+    import sys
+    from pathlib import Path
+    project_root = Path(__file__).parent.parent
+    sys.path.append(str(project_root))
+    
+    # Try imports again
+    from agents.scholar_agent.agent import ScholarAgent
+    from agents.citation_agent.agent import CitationAgent
+    from agents.factcheck_agent.agent import FactCheckAgent
+    from agents.context_agent.agent import ContextAgent
 
 app = Flask(__name__)
 CORS(app)
@@ -101,6 +114,11 @@ class ChatManager:
                 'content': response,
                 'timestamp': datetime.now().isoformat()
             })
+            
+            # Add token limit to response
+            MAX_TOKENS = 500
+            if len(response['text']) > MAX_TOKENS:
+                response['text'] = response['text'][:MAX_TOKENS] + "..."
             
             return response
             
@@ -296,13 +314,20 @@ async def chat():
         
         if 'error' in response:
             logger.error(f"Error processing message: {response['error']}")
-            return jsonify(response), 500
+            return jsonify({'error': response['error']}), 500
             
-        return jsonify(response)
+        # Add token limit to response text
+        MAX_TOKENS = 500
+        response_text = response.get('text', '')
+        if len(response_text) > MAX_TOKENS:
+            response_text = response_text[:MAX_TOKENS] + "..."
+            response['text'] = response_text
+            
+        return jsonify(response)  # Return the response directly without nesting
         
     except Exception as e:
-        logger.error(f"Error in chat endpoint: {str(e)}", exc_info=True)
-        return jsonify({'error': 'Internal server error'}), 500
+        logger.error(f"Error in chat endpoint: {str(e)}")
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/factcheck', methods=['POST'])
 def factcheck():

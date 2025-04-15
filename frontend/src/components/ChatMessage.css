@@ -1,0 +1,43 @@
+.chat-message {
+  display: flex;
+  margin: 1rem 0;
+  padding: 1rem;
+  border-radius: 0.5rem;
+  max-width: 80%;
+}
+
+.user {
+  background-color: #e3f2fd;
+  margin-left: auto;
+}
+
+.assistant {
+  background-color: #f5f5f5;
+  margin-right: auto;
+}
+
+.message-content {
+  width: 100%;
+  overflow-wrap: break-word;
+  white-space: pre-wrap;
+  max-height: 500px;
+  overflow-y: auto;
+}
+
+/* Style markdown elements */
+.message-content p,
+.message-content h1,
+.message-content h2,
+.message-content h3,
+.message-content ul,
+.message-content li {
+  color: inherit;
+  margin: 0.5rem 0;
+}
+
+.message-content pre {
+  background-color: #f8f9fa;
+  padding: 1rem;
+  border-radius: 0.25rem;
+  overflow-x: auto;
+} 
