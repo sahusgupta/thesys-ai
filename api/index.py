@@ -135,100 +135,88 @@ class ChatManager:
             }
 
     async def _format_response_with_openai(self, user_message: str, raw_data: Dict[str, Any]) -> str:
-        """Format the raw response data into human-readable text using OpenAI."""
+        """Format the raw response data into human-readable text using OpenAI, aiming for thoroughness."""
         try:
             from openai import AsyncOpenAI
             
             # Initialize OpenAI client
             client = AsyncOpenAI()
             
-            # Prepare paper summaries
+            # Prepare paper summaries - include more detail from top 3-5 papers
             paper_summaries = []
-            for paper in raw_data['papers']:
+            num_papers_to_include = min(len(raw_data.get('papers', [])), 3) # Use top 3 papers
+            
+            for paper in raw_data['papers'][:num_papers_to_include]:
+                # Allow longer titles and abstracts
+                title = paper['title'][:150] + '...' if len(paper['title']) > 150 else paper['title']
+                abstract = paper['abstract'][:400] + '...' if len(paper['abstract']) > 400 else paper['abstract']
+                authors = ', '.join(paper['authors'][:5]) # Include up to 5 authors
+                authors_str = f"{authors}{' et al.' if len(paper['authors']) > 5 else ''}"
+                
                 summary = f"""
-                    Title: {paper['title']}
-                    Authors: {', '.join(paper['authors'])}
+                    Title: {title}
+                    Authors: {authors_str}
                     Year: {paper['year']}
-                    Abstract: {paper['abstract']}
-                    Citations: {paper['citations']}
-                    URL: {paper['url']}
+                    Abstract Snippet: {abstract}
                 """
                 paper_summaries.append(summary)
             
-            # Prepare the prompt
-            prompt = f"""Based on the user's query and the research findings, create a clear and concise response.
+            # Prepare the prompt - ask for a detailed and thorough response
+            prompt = f"""Provide a comprehensive and thorough response to the user's query based on the provided research summaries.
 
                         User Query: {user_message}
 
-                        Research Papers Found:
-                        {chr(10).join(paper_summaries)}
+                        Relevant Research Summaries:
+                        {chr(10).join(paper_summaries) if paper_summaries else 'No specific papers found.'}
 
-                        Fact Check Result: {raw_data['fact_check']}
+                        Fact Check Status (if available): {raw_data.get('fact_check', {}).get('status', 'N/A')}
 
-                        Please create a response that:
-                        1. Directly addresses the user's query
-                        2. Incorporates specific information from the research papers provided
-                        3. Cites specific papers when making claims
-                        4. Maintains academic rigor while being accessible
-                        5. Acknowledges any limitations or uncertainties in the research
-                        6. Uses the fact-checking results to validate or qualify statements
+                        Guidelines:
+                        - Provide a detailed explanation addressing the user's query.
+                        - Integrate key findings and details from the research summaries.
+                        - Cite specific papers (using Author, Year) when referencing their findings.
+                        - Explain concepts clearly and elaborate where necessary.
+                        - Structure the response logically with an introduction, detailed body, and conclusion.
+                        - Aim for a response length of around 400-600 words, ensuring completeness.
 
-                        Format your response in a clear, structured way with:
-                        - An introduction that addresses the query
-                        - Main points supported by specific papers
-                        - Citations in APA format where appropriate
-                        - A conclusion that summarizes key findings
+                        Please synthesize the information into a well-written, informative response."""
 
-                        Keep the response focused on the most relevant information from the provided papers."""
-
-            self.logger.info("Sending prompt to OpenAI")
+            self.logger.info("Sending detailed prompt to OpenAI")
             
-            # Call OpenAI API
+            # Call OpenAI API - Allow more tokens and slightly higher temperature
             response = await client.chat.completions.create(
                 model="gpt-3.5-turbo",
                 messages=[
-                    {"role": "system", "content": "You are a scholarly research assistant that provides evidence-based responses using academic sources."},
+                    {"role": "system", "content": "You are a knowledgeable research assistant tasked with providing thorough, detailed, and well-supported answers based on academic literature."},
                     {"role": "user", "content": prompt}
                 ],
-                temperature=0.7,
-                max_tokens=1000
+                temperature=0.6,  # Slightly higher temperature for more detail
+                max_tokens=1500   # Allow ample tokens for a thorough response
             )
             
             self.logger.info("Received response from OpenAI")
             
             # Get the generated response
             gpt_response = response.choices[0].message.content
-            self.logger.info(f"GPT Response: {gpt_response[:200]}...")  # Log first 200 chars
+            self.logger.info(f"GPT Response length: {len(gpt_response)} chars")
             
-            # Fact-check the generated response
-            fact_check_results = []
-            for paper in raw_data['papers']:
-                # Convert paper to string for fact-checking
-                paper_text = f"Title: {paper['title']}\nAbstract: {paper['abstract']}"
-                # Check claims against each paper
-                paper_check = self.factcheck_agent.verify_claim(gpt_response, paper_text)
-                if paper_check:  # Only add non-empty results
-                    fact_check_results.append(paper_check)
-            
-            self.logger.info(f"Fact check results: {fact_check_results}")
-            
-            # Add fact-checking summary to the response
-            if fact_check_results:
-                verified_response = f"""{gpt_response}
-
-                Fact-Checking Summary:
-                {chr(10).join([f"- {result}" for result in fact_check_results])}"""
+            # Add concise source attribution if fact-checking occurred (using the simplified result)
+            fact_check_status = raw_data.get('fact_check', {}).get('status')
+            if fact_check_status and fact_check_status != 'error':
+                 verified_response = f"{gpt_response}\n\n---\nVerification Status: {fact_check_status.replace('_', ' ').title()}"
             else:
                 verified_response = gpt_response
             
-            self.logger.info(f"Final response: {verified_response[:200]}...")  # Log first 200 chars
             return verified_response
             
         except Exception as e:
             self.logger.error(f"Error formatting response with OpenAI: {str(e)}", exc_info=True)
-            # Fallback to a simple formatted response
-            papers_text = "\n".join([f"- {paper['title']} ({paper['year']})" for paper in raw_data['papers']])
-            return f"""I found {len(raw_data['papers'])} relevant papers for your query: {papers_text} Fact check result: {raw_data['fact_check']}"""
+            # Fallback response indicating error but still trying to provide some info
+            papers_found = len(raw_data.get('papers', []))
+            if papers_found > 0:
+                paper = raw_data['papers'][0]
+                return f"I encountered an error while generating a detailed response. Based on initial findings, research like '{paper['title'][:100]}...' might be relevant."
+            return "I encountered an error and couldn't generate a response."
 
     def get_chat_history(self, user_id: str) -> List[Dict[str, Any]]:
         """Get chat history for a user."""
@@ -315,13 +303,6 @@ async def chat():
         if 'error' in response:
             logger.error(f"Error processing message: {response['error']}")
             return jsonify({'error': response['error']}), 500
-            
-        # Add token limit to response text
-        MAX_TOKENS = 500
-        response_text = response.get('text', '')
-        if len(response_text) > MAX_TOKENS:
-            response_text = response_text[:MAX_TOKENS] + "..."
-            response['text'] = response_text
             
         return jsonify(response)  # Return the response directly without nesting
         

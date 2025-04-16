@@ -7,22 +7,55 @@ import json
 import re
 import os
 import tiktoken
+# Added imports for preprocessing and vectorization
+import nltk
+from nltk.corpus import stopwords
+from nltk.tokenize import word_tokenize
+from sentence_transformers import SentenceTransformer
+import numpy as np
+
+# Download NLTK data if necessary (run once)
+try:
+    nltk.data.find('tokenizers/punkt')
+except nltk.downloader.DownloadError:
+    nltk.download('punkt', quiet=True)
+    nltk.download('punkt_tab', quiet=True)
+try:
+    nltk.data.find('corpora/stopwords')
+except nltk.downloader.DownloadError:
+    nltk.download('stopwords', quiet=True)
 
 class FactCheckAgent:
     """
     The FactCheckAgent checks claims by:
-     - Searching CrossRef for references to the claim
-     - Possibly calling a public FactCheck.org or other service
-     - Returning a 'factcheck_score' & 'evaluation'
-     - 'verify_information(...)' merges or modifies data from other agents
+     - Searching external sources like ArXiv and NewsAPI
+     - Returning a verification status and evidence
+     - Preprocessing queries for better search results
+     - Providing text vectorization capabilities
     """
     def __init__(self):
         self.tokenizer = tiktoken.get_encoding("cl100k_base")
-        self.MAX_TOKENS = 900
+        self.MAX_TOKENS = 900 # Max tokens for truncation before vectorization etc.
         self.logger = logging.getLogger(__name__)
-        self.semantic_scholar_api = "https://api.semanticscholar.org/graph/v1"
+        # Removed Semantic Scholar API
         self.arxiv_api = "http://export.arxiv.org/api/query"
         self.news_api = "https://newsapi.org/v2/everything"
+
+        # --- New Initializations ---
+        # Preprocessing setup
+        self.stop_words = set(stopwords.words('english'))
+        # Add custom fluff words if needed
+        self.stop_words.update(['tell', 'me', 'about', 'what', 'is', 'are', 'how', 'show', 'find', 'search', 'for', 'papers', 'articles', 'research', 'on'])
+
+        # Vectorization model setup
+        try:
+            # Using a relatively small but effective model
+            self.vectorizer_model = SentenceTransformer('all-MiniLM-L6-v2')
+            self.logger.info("SentenceTransformer model loaded successfully.")
+        except Exception as e:
+            self.logger.error(f"Error loading SentenceTransformer model: {e}. Vectorization will be disabled.")
+            self.vectorizer_model = None
+        # --- End New Initializations ---
 
     def truncate_to_token_limit(self, text):
         if not isinstance(text, str):
@@ -116,7 +149,11 @@ class FactCheckAgent:
             }
 
     def verify_claim(self, claim: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """Verify a claim using available sources and context."""
+        """Verify a claim using available sources and context.
+        
+        Returns a dictionary containing the verification status and evidence, 
+        excluding the original claim text to prevent duplication.
+        """
         try:
             # Search for relevant papers
             papers = self._search_relevant_papers(claim)
@@ -130,8 +167,9 @@ class FactCheckAgent:
             # Determine claim status
             status = self._determine_claim_status(papers, news, context_analysis)
             
+            # Return only status and evidence, excluding the claim itself
             return {
-                "claim": claim,
+                # "claim": claim,  <-- Removed to prevent duplication
                 "status": status,
                 "evidence": {
                     "papers": papers,
@@ -142,56 +180,116 @@ class FactCheckAgent:
             }
         except Exception as e:
             self.logger.error(f"Error verifying claim: {str(e)}")
+            # Return error status without the claim text
             return {
-                "claim": claim,
+                # "claim": claim, <-- Removed to prevent duplication
                 "status": "error",
                 "error": str(e),
                 "timestamp": datetime.now().isoformat()
             }
 
-    def _search_relevant_papers(self, claim: str) -> List[Dict[str, Any]]:
-        """Search for relevant academic papers."""
+    def _preprocess_query(self, query: str) -> str:
+        """Removes stop words and non-alphanumeric characters from a query."""
+        if not isinstance(query, str):
+            return ""
         try:
+            # Tokenize
+            word_tokens = word_tokenize(query.lower())
+            # Remove stop words and non-alphanumeric (keeping basic punctuation for meaning)
+            filtered_tokens = [
+                w for w in word_tokens
+                if w.isalnum() and w not in self.stop_words
+            ]
+            # Limit query length after preprocessing
+            processed_query = " ".join(filtered_tokens)[:500] # Limit refined query length
+            self.logger.debug(f"Original query: '{query}', Processed query: '{processed_query}'")
+            return processed_query
+        except Exception as e:
+            self.logger.error(f"Error preprocessing query '{query}': {e}")
+            return query # Return original query on error
+
+    def _vectorize_text(self, text: str) -> Optional[np.ndarray]:
+        """Generates a vector embedding for the given text."""
+        if not self.vectorizer_model:
+            self.logger.warning("Vectorizer model not loaded. Cannot vectorize text.")
+            return None
+        if not isinstance(text, str) or not text.strip():
+            return None
+        try:
+            # Truncate text before vectorizing if it's too long
+            truncated_text = self.truncate_to_token_limit(text)
+            # Generate embedding
+            embedding = self.vectorizer_model.encode(truncated_text)
+            return embedding
+        except Exception as e:
+            self.logger.error(f"Error vectorizing text: {e}")
+            return None
+
+    def _search_relevant_papers(self, claim: str) -> List[Dict[str, Any]]:
+        """Search for relevant academic papers using a preprocessed query."""
+        processed_claim = self._preprocess_query(claim)
+        if not processed_claim:
+            self.logger.warning("Claim preprocessing resulted in an empty query. Skipping ArXiv search.")
+            return []
+        try:
+            # Using ArXiv API directly now
             response = requests.get(
-                f"{self.semantic_scholar_api}/paper/search",
+                self.arxiv_api,
                 params={
-                    'query': claim,
-                    'limit': 5,
-                    'fields': 'title,authors,year,venue,abstract,url,citations'
+                    'search_query': f'all:{processed_claim}', # Use preprocessed query
+                    'start': 0,
+                    'max_results': 5 # Limit results
                 }
             )
-            if response.status_code == 200:
-                papers = response.json().get('data', [])
-                return [self._process_paper(paper) for paper in papers]
+            response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
+
+            # Parse ArXiv XML response (requires additional parsing logic)
+            # For simplicity, placeholder - replace with proper XML parsing (e.g., using feedparser)
+            # papers = self._parse_arxiv_response(response.text)
+            # return [self._process_paper(paper) for paper in papers]
+            self.logger.warning("ArXiv XML parsing not fully implemented. Returning empty list for papers.")
+            # Placeholder: Returning empty list until XML parsing is added
+            return []
+
+        except requests.exceptions.RequestException as e:
+            self.logger.error(f"Error during ArXiv request: {e}")
             return []
         except Exception as e:
-            self.logger.error(f"Error searching papers: {str(e)}")
+            self.logger.error(f"Error searching ArXiv papers: {e}")
             return []
 
     def _search_news_articles(self, claim: str) -> List[Dict[str, Any]]:
-        """Search for relevant news articles."""
+        """Search for relevant news articles using a preprocessed query."""
+        processed_claim = self._preprocess_query(claim)
+        if not processed_claim:
+             self.logger.warning("Claim preprocessing resulted in an empty query. Skipping NewsAPI search.")
+             return []
         try:
-            # Note: You'll need to set NEWS_API_KEY in your environment variables
             api_key = os.getenv('NEWS_API_KEY')
             if not api_key:
+                self.logger.warning("NEWS_API_KEY not set. Skipping news search.")
                 return []
 
             response = requests.get(
                 self.news_api,
                 params={
-                    'q': claim,
+                    'q': processed_claim, # Use preprocessed query
                     'apiKey': api_key,
                     'language': 'en',
                     'sortBy': 'relevancy',
-                    'pageSize': 5
+                    'pageSize': 5 # Limit results
                 }
             )
+            response.raise_for_status()
             if response.status_code == 200:
                 articles = response.json().get('articles', [])
                 return [self._process_news_article(article) for article in articles]
             return []
+        except requests.exceptions.RequestException as e:
+            self.logger.error(f"Error during NewsAPI request: {e}")
+            return []
         except Exception as e:
-            self.logger.error(f"Error searching news: {str(e)}")
+            self.logger.error(f"Error searching news: {e}")
             return []
 
     def _analyze_against_context(self, claim: str, context: Dict[str, Any]) -> Dict[str, Any]:

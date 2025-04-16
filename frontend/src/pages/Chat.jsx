@@ -9,60 +9,51 @@ import { AiOutlineLoading3Quarters } from 'react-icons/ai';
  * Format the response text based on the question type and content
  */
 const formatResponse = (text, question) => {
-  // If the response is already formatted, return as is
+  if (!text) return 'No response received';
+  
+  // If the response is already well-formatted, return as is
   if (text.includes('\n') || text.includes('•') || text.includes('*')) {
     return text;
   }
 
-  // Check question type
+  // Basic question type detection
   const isResearchQuestion = question.toLowerCase().includes('research') || 
                            question.toLowerCase().includes('papers') ||
-                           question.toLowerCase().includes('articles') ||
-                           question.toLowerCase().includes('books') ||
-                           question.toLowerCase().includes('journal') ||
-                           question.toLowerCase().includes('literature') ||
-                           question.toLowerCase().includes('studies');
+                           question.toLowerCase().includes('articles');
+  
   const isCodeQuestion = question.toLowerCase().includes('code') || 
-                        question.toLowerCase().includes('function') ||
-                        question.toLowerCase().includes('implementation');
+                        question.toLowerCase().includes('function');
+  
   const isFactQuestion = question.toLowerCase().includes('what') || 
                         question.toLowerCase().includes('how') ||
                         question.toLowerCase().includes('why');
 
-  let formattedText = text;
-
-  // Format research-related responses
+  // Simple formatting based on question type
   if (isResearchQuestion) {
-    // Split into paragraphs and add bullet points for key findings
+    // Split into paragraphs and add bullet points for key points
     const paragraphs = text.split('\n\n');
-    formattedText = paragraphs.map((para, idx) => {
-      if (idx === 0) {
-        return para; // Keep the introduction as is
-      }
-      // Add bullet points for subsequent paragraphs
+    return paragraphs.map((para, idx) => {
+      if (idx === 0) return para; // Keep introduction as is
       return `• ${para.trim()}`;
     }).join('\n\n');
   }
-  // Format code-related responses
-  else if (isCodeQuestion) {
+  
+  if (isCodeQuestion) {
     // Add code block markers if not present
-    if (!text.includes('```')) {
-      formattedText = `Here's how you can implement this:\n\n\`\`\`\n${text}\n\`\`\``;
-    }
+    return text.includes('```') ? text : `\`\`\`\n${text}\n\`\`\``;
   }
-  // Format fact-based responses
-  else if (isFactQuestion) {
-    // Add clear section breaks for facts
+  
+  if (isFactQuestion) {
+    // Add bullet points for facts
     const sentences = text.split('. ');
-    formattedText = sentences.map((sentence, idx) => {
-      if (idx === 0) {
-        return sentence + '.'; // First sentence as introduction
-      }
-      return `\n• ${sentence.trim()}.`; // Subsequent sentences as bullet points
+    return sentences.map((sentence, idx) => {
+      if (idx === 0) return sentence + '.';
+      return `\n• ${sentence.trim()}.`;
     }).join('');
   }
 
-  return formattedText;
+  // Default formatting for other types
+  return text;
 };
 
 /**
@@ -196,78 +187,36 @@ export default function Chat() {
   };
 
   const typeMessage = async (text) => {
-    setIsGenerating(true);
-    let messageToType = '';
-
-    if (typeof text === 'string') {
-      messageToType = text;
-    } else {
-      messageToType = "Received unexpected response format.";
-      console.error("typeMessage received non-string:", text);
-    }
-
-    if (!messageToType?.trim()) {
-      messageToType = "I apologize, but I couldn't generate a proper response. Please try again.";
-    }
-
-    setTotalMessageLength(messageToType.length);
-    setCurrentMessageLength(0);
-    setTypingProgress(0);
-
-    // Add an empty message bubble
-    const messageId = `msg-${messageIdRef.current++}-${Date.now()}`;
-    setMessages(prev => [...prev, {
-      id: messageId,
-      sender: 'Thesys',
-      text: '',
-      timestamp: new Date().toISOString(),
-      type: 'text'
-    }]);
-
-    // Type out the message character by character
-    for (let i = 0; i < messageToType.length; i++) {
-      if (!isGenerating) break;
-      
-      messageToType = messageToType.substring(0, i + 1);
-      setCurrentMessageLength(i + 1);
-      setTypingProgress(Math.round(((i + 1) / messageToType.length) * 100));
-      
-      // Update the message text
-      setMessages(prev => {
-        const newMessages = [...prev];
-        const messageIndex = newMessages.findIndex(msg => msg.id === messageId);
-        if (messageIndex !== -1) {
-          newMessages[messageIndex] = {
-            ...newMessages[messageIndex],
-            text: messageToType,
-            timestamp: new Date().toISOString()
-          };
-        }
-        return newMessages;
-      });
-      
-      // Small delay between characters
-      await new Promise(resolve => setTimeout(resolve, 20));
-    }
+    if (!text) return;
     
-    setIsGenerating(false);
-    setTypingProgress(100);
+    // Add the message immediately to ensure it's in the chat
+    addMessage('Thesys', text);
+    
+    // If the message is long, show a brief generating indicator
+    if (text.length > 100) {
+      setIsGenerating(true);
+      await new Promise(resolve => setTimeout(resolve, 500));
+      setIsGenerating(false);
+    }
   };
 
   const handleSend = async () => {
     const trimmed = inputText.trim();
     if (!trimmed) return;
 
+    // Limit message length to 300 characters
+    const limitedMessage = trimmed.slice(0, 300);
+    
     // Add user message
-    addMessage('User', trimmed);
+    addMessage('User', limitedMessage);
     setInputText('');
 
     try {
       setIsGenerating(true);
 
-      // Prepare payload with the structure the backend expects
+      // Simple payload structure
       const payload = {
-        message: trimmed, // Send the message as a string directly
+        message: limitedMessage,
         user_id: currentUser?.uid || 'anonymous',
         chatId
       };
@@ -284,16 +233,16 @@ export default function Chat() {
         }
       });
 
-      // The server returns { status: 'success', response: { text: "...", raw_data: {...} } }
+      // Handle response
       const { data } = response;
-      if (data.error) {
-        await typeMessage(`Error: ${data.error}`);
+      const { text = '', error } = data;
+
+      if (error) {
+        await typeMessage(`Error: ${error}`);
       } else {
-        // Should correctly get the text generated by ChatManager
-        const responseText = data.text || '';
-        await typeMessage(responseText);
-        // Optional: Store raw data if needed
-        // setLastResponseData(data.raw_data);
+        // Format and display the response
+        const formattedText = formatResponse(text, limitedMessage);
+        await typeMessage(formattedText);
       }
     } catch (err) {
       if (axios.isCancel(err)) {

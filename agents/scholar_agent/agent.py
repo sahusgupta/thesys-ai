@@ -121,24 +121,16 @@ class ScholarAgent:
             return None
 
     async def search_papers(self, query: str, max_results: int = 10) -> List[Dict]:
-        """Search for papers in both Semantic Scholar and ArXiv APIs."""
+        """Search for papers using ArXiv API."""
         try:
-            # First try Semantic Scholar
-            semantic_results = await self._search_semantic_scholar(query, max_results, 0)
-            semantic_papers = semantic_results.get('papers', []) if semantic_results.get('status') == 'success' else []
-            
-            # If we got results from Semantic Scholar, return them
-            if semantic_papers:
-                return semantic_papers[:max_results]
-            
-            # If no results from Semantic Scholar, try ArXiv
-            self.logger.info("No results from Semantic Scholar, falling back to ArXiv")
+            # Search ArXiv directly
+            self.logger.info(f"Searching ArXiv for: {query}")
             arxiv_papers = self._search_arxiv(query, max_results)
             
             if arxiv_papers:
                 return arxiv_papers[:max_results]
             
-            # If no results from either source, return empty list
+            # If no results from ArXiv, return empty list
             self.logger.warning(f"No results found for query: {query}")
             return []
             
