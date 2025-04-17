@@ -13,17 +13,9 @@ from nltk.corpus import stopwords
 from nltk.tokenize import word_tokenize
 from sentence_transformers import SentenceTransformer
 import numpy as np
-
-# Download NLTK data if necessary (run once)
-try:
-    nltk.data.find('tokenizers/punkt')
-except nltk.downloader.DownloadError:
-    nltk.download('punkt', quiet=True)
-    nltk.download('punkt_tab', quiet=True)
-try:
-    nltk.data.find('corpora/stopwords')
-except nltk.downloader.DownloadError:
-    nltk.download('stopwords', quiet=True)
+nltk.download('punkt_tab', quiet=True)
+nltk.download('punkt', quiet=True)
+nltk.download('stopwords', quiet=True)
 
 class FactCheckAgent:
     """
