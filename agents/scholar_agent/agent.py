@@ -28,10 +28,7 @@ class ScholarAgent:
             "Content-Type": "application/json",
         }
         
-        # Initialize database connection
-        self.db_conn = None
-        self._ensure_db_connection()
-        
+
         # Create papers directory if it doesn't exist
         self.papers_dir = Path("data/papers")
         self.papers_dir.mkdir(parents=True, exist_ok=True)
@@ -68,58 +65,7 @@ class ScholarAgent:
             self.logger.error(f"Error initializing S3 client: {str(e)}")
             raise
     
-    def _connect_to_db(self, max_retries: int = 3, initial_delay: float = 1.0) -> None:
-        """Connect to PostgreSQL with retry logic and exponential backoff."""
-        delay = initial_delay
-        for attempt in range(max_retries):
-            try:
-                self.db_conn = psycopg2.connect(
-                    host="localhost",
-                    database="paper_repository",
-                    user="postgres",
-                    password="ktsg1899"
-                )
-                self.logger.info("Successfully connected to database")
-                return
-            except psycopg2.OperationalError as e:
-                if attempt == max_retries - 1:
-                    self.logger.error(f"Failed to connect to database after {max_retries} attempts")
-                    raise
-                
-                self.logger.warning(f"Database connection attempt {attempt + 1} failed: {str(e)}")
-                self.logger.info(f"Retrying in {delay} seconds...")
-                time.sleep(delay)
-                delay *= 2  # Exponential backoff
-
-    def _ensure_db_connection(self) -> None:
-        """Ensure we have an active database connection."""
-        try:
-            if self.db_conn is None or self.db_conn.closed:
-                self._connect_to_db()
-        except psycopg2.OperationalError as e:
-            if "database \"paper_repository\" does not exist" in str(e):
-                self.logger.info("Database does not exist. Initializing...")
-                init_database()
-                self._connect_to_db()
-            else:
-                raise
-
-    def get_paper_url(self, paper_id: str) -> Optional[str]:
-        """Get the URL for a paper by its ID."""
-        try:
-            self._ensure_db_connection()
-            with self.db_conn.cursor() as cur:
-                cur.execute("""
-                    SELECT url FROM papers WHERE id = %s
-                """, (paper_id,))
-                result = cur.fetchone()
-                if result:
-                    return result[0]
-                return None
-        except Exception as e:
-            self.logger.error(f"Error getting paper URL: {str(e)}")
-            return None
-
+    
     async def search_papers(self, query: str, max_results: int = 10) -> List[Dict]:
         """Search for papers using ArXiv API."""
         try:
@@ -138,62 +84,6 @@ class ScholarAgent:
             self.logger.error(f"Error searching papers: {str(e)}")
             return []
 
-    async def get_paper_details(self, paper_id: str) -> Optional[Dict]:
-        """Get detailed information about a paper."""
-        try:
-            self._ensure_db_connection()
-            with self.db_conn.cursor() as cur:
-                cur.execute("""
-                    SELECT p.*, COUNT(c.id) as citation_count
-                    FROM papers p
-                    LEFT JOIN citations c ON p.id = c.cited_paper_id
-                    WHERE p.id = %s
-                    GROUP BY p.id
-                """, (paper_id,))
-                
-                row = cur.fetchone()
-                if row:
-                    return {
-                        'id': row[0],
-                        'title': row[1],
-                        'abstract': row[2],
-                        'authors': row[3],
-                        'year': row[4],
-                        'url': row[5],
-                        'citation_count': row[6]
-                    }
-                return None
-        except Exception as e:
-            self.logger.error(f"Error getting paper details: {str(e)}")
-            return None
-
-    def save_paper(self, paper_data: Dict) -> bool:
-        """Save paper data to the database."""
-        try:
-            self._ensure_db_connection()
-            with self.db_conn.cursor() as cur:
-                cur.execute("""
-                    INSERT INTO papers (id, title, abstract, authors, year, url)
-                    VALUES (%s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (id) DO UPDATE
-                    SET title = EXCLUDED.title,
-                        abstract = EXCLUDED.abstract,
-                        authors = EXCLUDED.authors,
-                        year = EXCLUDED.year,
-                        url = EXCLUDED.url
-                """, (
-                    paper_data['id'],
-                    paper_data['title'],
-                    paper_data['abstract'],
-                    paper_data['authors'],
-                    paper_data['year'],
-                    paper_data['url']
-                ))
-                self.db_conn.commit()
-                return True
-        except Exception as e:
-            self.logger.error(f"Error saving paper: {str(e)}")
-            return False
 
     def _make_request_with_backoff(self, url, params=None):
         """Helper method to make API requests with exponential backoff"""
@@ -334,39 +224,7 @@ class ScholarAgent:
                 'message': str(e)
             }
 
-    async def search_user_library(self, query: str, user_id: str, max_results: int = 10) -> List[Dict]:
-        """Search for papers in the user's library."""
-        try:
-            self._ensure_db_connection()
-            with self.db_conn.cursor() as cur:
-                cur.execute("""
-                    SELECT p.*, COUNT(c.id) as citation_count
-                    FROM papers p
-                    LEFT JOIN citations c ON p.id = c.cited_paper_id
-                    INNER JOIN user_library ul ON p.id = ul.paper_id
-                    WHERE ul.user_id = %s
-                    AND to_tsvector('english', p.title || ' ' || p.abstract) @@ to_tsquery('english', %s)
-                    GROUP BY p.id
-                    ORDER BY citation_count DESC
-                    LIMIT %s
-                """, (user_id, query, max_results))
-                
-                results = []
-                for row in cur.fetchall():
-                    results.append({
-                        'id': row[0],
-                        'title': row[1],
-                        'abstract': row[2],
-                        'authors': row[3],
-                        'year': row[4],
-                        'url': row[5],
-                        'citation_count': row[6]
-                    })
-                return results
-        except Exception as e:
-            self.logger.error(f"Error searching user library: {str(e)}")
-            return []
-
+    
     async def upload_paper(self, user_id: str, file_data: bytes, file_name: str, file_type: str) -> Dict:
         """Upload a paper to S3."""
         try:
@@ -447,59 +305,6 @@ class ScholarAgent:
             self.logger.error(f"Error extracting text from PDF: {str(e)}")
             return ""
 
-    async def get_uploaded_paper(self, user_id: str, paper_id: str) -> Dict:
-        """Get an uploaded paper's content and metadata."""
-        try:
-            self._ensure_db_connection()
-            with self.db_conn.cursor() as cur:
-                # Get upload metadata
-                cur.execute("""
-                    SELECT u.*, p.title, p.abstract
-                    FROM user_uploads u
-                    JOIN papers p ON u.paper_id = p.id
-                    WHERE u.user_id = %s AND u.paper_id = %s
-                """, (user_id, paper_id))
-                
-                upload = cur.fetchone()
-                if not upload:
-                    return {
-                        'status': 'error',
-                        'message': 'Paper not found'
-                    }
-                
-                # Get file from S3
-                try:
-                    response = self.s3_client.get_object(
-                        Bucket=self.s3_bucket,
-                        Key=upload[4]  # s3_key
-                    )
-                    file_content = response['Body'].read()
-                    
-                    return {
-                        'status': 'success',
-                        'paper': {
-                            'id': paper_id,
-                            'title': upload[7],  # title
-                            'abstract': upload[8],  # abstract
-                            'file_name': upload[3],  # file_name
-                            'file_type': upload[5],  # file_type
-                            'content': file_content.decode('utf-8') if upload[5] == 'text/plain' else None,
-                            'url': f"https://{self.s3_bucket}.s3.amazonaws.com/{upload[4]}"  # s3_key
-                        }
-                    }
-                except ClientError as e:
-                    self.logger.error(f"Error retrieving file from S3: {str(e)}")
-                    return {
-                        'status': 'error',
-                        'message': 'Error retrieving file'
-                    }
-                    
-        except Exception as e:
-            self.logger.error(f"Error getting uploaded paper: {str(e)}")
-            return {
-                'status': 'error',
-                'message': str(e)
-            }
 
     def _generate_presigned_url(self, key: str, expires_in: int = 3600) -> str:
         """Generate a pre-signed URL for an S3 object."""
@@ -653,5 +458,4 @@ class ScholarAgent:
 
     def __del__(self):
         """Clean up database connection when the object is destroyed."""
-        if self.db_conn and not self.db_conn.closed:
-            self.db_conn.close()
+        pass
