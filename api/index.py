@@ -60,163 +60,115 @@ class ChatManager:
         # Store chat sessions
         self.chat_sessions = {}
 
-    async def process_message(self, message: str, user_id: str) -> Dict[str, Any]:
-        """Process a message through all relevant agents."""
+    async def process_message(self, message: str, user_id: str, previous_context_vector: Optional[List[float]] = None) -> Dict[str, Any]:
+        """Process a message using vector context instead of full history."""
         try:
-            self.logger.info(f"Processing message: {message}")
+            self.logger.info(f"Processing message for user {user_id} with vector context.")
             
-            # Get user context
-            context = self.context_agent.get_user_context(user_id)
-            self.logger.info(f"User context: {context}")
-            
-            # Fact-check the message
-            fact_check_result = self.factcheck_agent.verify_claim(message, context)
+            # Fact-check the message (if needed - currently relies on context we removed)
+            fact_check_result = self.factcheck_agent.verify_claim(message) # Simplified call
             self.logger.info(f"Fact check result: {fact_check_result}")
             
-            # Search for relevant papers
+            # Search for relevant papers based on the current message
             papers = await self.scholar_agent.search_papers(message)
             self.logger.info(f"Found {len(papers)} papers")
             
-            # Generate citations for found papers
-            citations = []
-            for paper in papers:
-                citation = self.citation_agent.generate_citation(paper, style='apa')
-                citations.append(citation)
-            self.logger.info(f"Generated {len(citations)} citations")
+            # Generate citations (optional)
+            citations = [self.citation_agent.generate_citation(p, 'apa') for p in papers]
             
-            # Save message to chat history
-            self.context_agent.add_to_chat_history(user_id, {
-                'role': 'user',
-                'content': message,
-                'timestamp': datetime.now().isoformat()
-            })
-            
-            # Prepare raw response data
-            raw_response = {
+            # Prepare raw data (excluding history)
+            raw_response_data = {
                 'papers': papers,
                 'citations': citations,
                 'fact_check': fact_check_result
             }
             
-            # Format response using OpenAI
-            formatted_response = await self._format_response_with_openai(message, raw_response)
-            self.logger.info(f"Formatted response: {formatted_response[:200]}...")  # Log first 200 chars
+            # Format response using OpenAI (prompt now only uses current message + papers)
+            formatted_response_text = await self._format_response_with_openai(message, raw_response_data)
+            self.logger.info(f"Formatted response length: {len(formatted_response_text)} chars")
             
-            # Prepare final response
-            response = {
-                'text': formatted_response,
-                'raw_data': raw_response
+            # Convert numpy array to list for JSON serialization
+            response_vector = self.factcheck_agent._vectorize_text(formatted_response_text)
+            if response_vector is not None:
+                response_vector = response_vector.tolist()
+                self.logger.info(f"Generated response vector of dimension {len(response_vector)}")
+            else:
+                self.logger.warning("Failed to generate response vector.")
+                response_vector = None # Ensure it's explicitly None
+            
+            # Prepare final response including the new vector
+            final_response = {
+                'text': formatted_response_text,
+                'raw_data': raw_response_data,
+                'response_vector': response_vector # Include the generated vector
             }
             
-            # Save response to chat history
-            self.context_agent.add_to_chat_history(user_id, {
-            'role': 'assistant',
-                'content': response,
-                'timestamp': datetime.now().isoformat()
-            })
-            
-            # Add token limit to response
-            MAX_TOKENS = 500
-            if len(response['text']) > MAX_TOKENS:
-                response['text'] = response['text'][:MAX_TOKENS] + "..."
-            
-            return response
+            return final_response
             
         except Exception as e:
             self.logger.error(f"Error processing message: {str(e)}", exc_info=True)
             return {
                 'error': str(e),
-                'text': "I encountered an error while processing your request. Please try again later.",
-                'raw_data': {
-                    'papers': [],
-                    'citations': [],
-                    'fact_check': None
-                }
+                'text': "I encountered an error while processing your request.",
+                'raw_data': {},
+                'response_vector': None # Ensure vector is None on error
             }
 
     async def _format_response_with_openai(self, user_message: str, raw_data: Dict[str, Any]) -> str:
-        """Format the raw response data into human-readable text using OpenAI, aiming for thoroughness."""
+        """Format response using OpenAI, without relying on chat history in the prompt."""
         try:
             from openai import AsyncOpenAI
-            
-            # Initialize OpenAI client
             client = AsyncOpenAI()
             
-            # Prepare paper summaries - include more detail from top 3-5 papers
+            # Prepare paper summaries (as before)
             paper_summaries = []
-            num_papers_to_include = min(len(raw_data.get('papers', [])), 3) # Use top 3 papers
-            
+            num_papers_to_include = min(len(raw_data.get('papers', [])), 3)
             for paper in raw_data['papers'][:num_papers_to_include]:
-                # Allow longer titles and abstracts
                 title = paper['title'][:150] + '...' if len(paper['title']) > 150 else paper['title']
                 abstract = paper['abstract'][:400] + '...' if len(paper['abstract']) > 400 else paper['abstract']
-                authors = ', '.join(paper['authors'][:5]) # Include up to 5 authors
+                authors = ', '.join(paper['authors'][:5])
                 authors_str = f"{authors}{' et al.' if len(paper['authors']) > 5 else ''}"
-                
-                summary = f"""
-                    Title: {title}
-                    Authors: {authors_str}
-                    Year: {paper['year']}
-                    Abstract Snippet: {abstract}
-                """
+                summary = f"""Title: {title}\nAuthors: {authors_str}\nYear: {paper['year']}\nAbstract Snippet: {abstract}"""
                 paper_summaries.append(summary)
             
-            # Prepare the prompt - ask for a detailed and thorough response
-            prompt = f"""Provide a comprehensive and thorough response to the user's query based on the provided research summaries.
+            # Prepare prompt - *No chat history included*
+            # Note: We removed fact_check from prompt as it might have relied on history
+            prompt = f"""Provide a comprehensive response to the query based *only* on the user's current message and the provided research summaries.
 
-                        User Query: {user_message}
+                    User Query: {user_message}
 
-                        Relevant Research Summaries:
-                        {chr(10).join(paper_summaries) if paper_summaries else 'No specific papers found.'}
+                    Relevant Research Summaries:
+                    {chr(10).join(paper_summaries) if paper_summaries else 'No specific papers found related to this query.'}
 
-                        Fact Check Status (if available): {raw_data.get('fact_check', {}).get('status', 'N/A')}
+                    Guidelines:
+                    - Address the user's current query directly.
+                    - Integrate findings from the research summaries if relevant.
+                    - Cite papers (Author, Year) if used.
+                    - Explain concepts clearly.
+                    - Structure the response logically.
+                    - Aim for a response length of 400-600 words.
+                    """
 
-                        Guidelines:
-                        - Provide a detailed explanation addressing the user's query.
-                        - Integrate key findings and details from the research summaries.
-                        - Cite specific papers (using Author, Year) when referencing their findings.
-                        - Explain concepts clearly and elaborate where necessary.
-                        - Structure the response logically with an introduction, detailed body, and conclusion.
-                        - Aim for a response length of around 400-600 words, ensuring completeness.
-
-                        Please synthesize the information into a well-written, informative response."""
-
-            self.logger.info("Sending detailed prompt to OpenAI")
-            
-            # Call OpenAI API - Allow more tokens and slightly higher temperature
+            self.logger.info("Sending prompt to OpenAI (no chat history)")
             response = await client.chat.completions.create(
                 model="gpt-3.5-turbo",
                 messages=[
-                    {"role": "system", "content": "You are a knowledgeable research assistant tasked with providing thorough, detailed, and well-supported answers based on academic literature."},
+                    {"role": "system", "content": "You are a research assistant answering queries based *only* on the current message and provided article summaries. Do not refer to past interactions."}, # System message updated
                     {"role": "user", "content": prompt}
                 ],
-                temperature=0.6,  # Slightly higher temperature for more detail
-                max_tokens=1500   # Allow ample tokens for a thorough response
+                temperature=0.6,
+                max_tokens=1500
             )
-            
-            self.logger.info("Received response from OpenAI")
-            
-            # Get the generated response
             gpt_response = response.choices[0].message.content
             self.logger.info(f"GPT Response length: {len(gpt_response)} chars")
             
-            # Add concise source attribution if fact-checking occurred (using the simplified result)
-            fact_check_status = raw_data.get('fact_check', {}).get('status')
-            if fact_check_status and fact_check_status != 'error':
-                 verified_response = f"{gpt_response}\n\n---\nVerification Status: {fact_check_status.replace('_', ' ').title()}"
-            else:
-                verified_response = gpt_response
-            
-            return verified_response
+            # Removed post-GPT fact-checking/verification step as it relied on context
+            return gpt_response # Return the raw GPT response
             
         except Exception as e:
             self.logger.error(f"Error formatting response with OpenAI: {str(e)}", exc_info=True)
-            # Fallback response indicating error but still trying to provide some info
-            papers_found = len(raw_data.get('papers', []))
-            if papers_found > 0:
-                paper = raw_data['papers'][0]
-                return f"I encountered an error while generating a detailed response. Based on initial findings, research like '{paper['title'][:100]}...' might be relevant."
-            return "I encountered an error and couldn't generate a response."
+            # Simplified fallback
+            return "I encountered an error while generating the response."
 
     def get_chat_history(self, user_id: str) -> List[Dict[str, Any]]:
         """Get chat history for a user."""
@@ -281,7 +233,7 @@ chat_manager = ChatManager()
 
 @app.route('/api/chat', methods=['POST'])
 async def chat():
-    """Enhanced chat endpoint that coordinates between multiple agents."""
+    """Chat endpoint using vector context."""
     try:
         data = request.json
         if not data:
@@ -293,22 +245,24 @@ async def chat():
             logger.error("No message provided")
             return jsonify({'error': 'Message is required'}), 400
             
-        # Generate a temporary user_id if not provided
         user_id = data.get('user_id', str(uuid.uuid4()))
-        logger.info(f"Processing message for user {user_id}: {message[:100]}...")
+        # --- Get the previous vector from the request --- 
+        previous_context_vector = data.get('previous_context_vector') # Might be None
+        logger.info(f"Processing message for user {user_id}. Has previous vector: {previous_context_vector is not None}")
         
-        # Process message through chat manager
-        response = await chat_manager.process_message(message, user_id)
+        # Process message, passing the previous vector
+        response_data = await chat_manager.process_message(message, user_id, previous_context_vector)
         
-        if 'error' in response:
-            logger.error(f"Error processing message: {response['error']}")
-            return jsonify({'error': response['error']}), 500
+        if 'error' in response_data:
+            logger.error(f"Error processing message: {response_data['error']}")
+            return jsonify({'error': response_data['error']}), 500
             
-        return jsonify(response)  # Return the response directly without nesting
+        # Return the full response data (including text and the new response_vector)
+        return jsonify(response_data) 
         
     except Exception as e:
         logger.error(f"Error in chat endpoint: {str(e)}")
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': str(e), 'response_vector': None}), 500 # Ensure vector is None on error
 
 @app.route('/api/factcheck', methods=['POST'])
 def factcheck():
