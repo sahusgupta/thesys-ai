@@ -65,6 +65,7 @@ CREATE TABLE IF NOT EXISTS user_files (
     file_name TEXT NOT NULL,
     file_type TEXT NOT NULL,
     s3_key TEXT NOT NULL,
+    summary TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
