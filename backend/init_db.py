@@ -48,65 +48,8 @@ def init_database():
         schema_path = Path(__file__).parent / 'schema.sql'
         with open(schema_path, 'r') as f:
             cur.execute(f.read())
-        
-        # Create papers table
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS papers (
-                id VARCHAR(255) PRIMARY KEY,
-                title TEXT NOT NULL,
-                abstract TEXT,
-                authors TEXT[],
-                year INTEGER,
-                url TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
 
-        # Create citations table
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS citations (
-                id SERIAL PRIMARY KEY,
-                citing_paper_id VARCHAR(255) REFERENCES papers(id),
-                cited_paper_id VARCHAR(255) REFERENCES papers(id),
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-
-        # Create user_library table
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS user_library (
-                id SERIAL PRIMARY KEY,
-                user_id VARCHAR(255) NOT NULL,
-                paper_id VARCHAR(255) REFERENCES papers(id),
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(user_id, paper_id)
-            )
-        """)
-
-        # Create user_files table
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS user_files (
-                id VARCHAR(255) PRIMARY KEY,
-                user_id VARCHAR(255) NOT NULL,
-                file_name TEXT NOT NULL,
-                file_type TEXT NOT NULL,
-                s3_key TEXT NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-
-        # Create user_uploads table
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS user_uploads (
-                id SERIAL PRIMARY KEY,
-                user_id VARCHAR(255) NOT NULL,
-                paper_id VARCHAR(255) REFERENCES papers(id),
-                file_name TEXT NOT NULL,
-                s3_key TEXT NOT NULL,
-                file_type TEXT NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
+        # Removed redundant CREATE TABLE statements as they are handled by schema.sql
 
         conn.commit()
         logger.info("Database initialization completed successfully")

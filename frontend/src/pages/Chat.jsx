@@ -167,11 +167,30 @@ export default function Chat() {
 
   /* ---------------- API Interactions ---------------- */
   const handleSend = async () => {
-    if (!inputText.trim()) return;
+    if (!inputText.trim() || isGenerating) return; // Prevent sending empty or while generating
     const limitedMessage = inputText.trim().slice(0, 500);
 
     addMessageToActiveChat('User', limitedMessage);
     setInputText('');
+
+    // --- Read temperature from localStorage --- 
+    let temperature = 0.7; // Default value
+    try {
+      const savedTemp = localStorage.getItem('ai_temperature');
+      if (savedTemp !== null) {
+        temperature = parseFloat(savedTemp);
+        // Basic validation (optional but recommended)
+        if (isNaN(temperature) || temperature < 0 || temperature > 1) {
+          console.warn('Invalid temperature in localStorage, using default.');
+          temperature = 0.7;
+        }
+      }
+    } catch (err) {
+      console.error("Error reading temperature from localStorage:", err);
+      // Use default if error reading
+      temperature = 0.7;
+    }
+    // --- End Read temperature ---
 
     try {
       setIsGenerating(true);
@@ -180,11 +199,14 @@ export default function Chat() {
       const payload = {
         message: limitedMessage,
         user_id: currentUser?.uid || 'anonymous',
-        previous_context_vector: activeChat?.lastResponseVector || null
+        previous_context_vector: activeChat?.lastResponseVector || null,
+        temperature: temperature // Include temperature in payload
       };
 
       const source = axios.CancelToken.source();
       cancelToken.current = source;
+
+      console.log("Sending payload:", payload); // Debug: Log the payload being sent
 
       const response = await axios.post('http://127.0.0.1:5000/api/chat', payload, {
         cancelToken: source.token,
@@ -207,6 +229,7 @@ export default function Chat() {
       if (axios.isCancel(err)) {
         addMessageToActiveChat('Thesys', 'Response generation cancelled.');
       } else {
+        console.error("API call error:", err); // Log the full error
         addMessageToActiveChat('Thesys', `Error: ${err.message}`);
       }
       updateChat(activeChatId, { lastResponseVector: null });
