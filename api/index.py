@@ -1,7 +1,16 @@
+import sys
+import os
+import firebase_admin
+from firebase_admin import credentials, auth
+
+# Add the project root directory (parent of the directory containing this file) to sys.path
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 import uuid
-import os
 from dotenv import load_dotenv
 from werkzeug.utils import secure_filename
 import logging
@@ -10,6 +19,7 @@ from typing import Dict, Any, List, Optional
 import psycopg2
 import time
 import asyncio
+from backend.context_agent import ContextAgent # Ensure context_agent is initialized
 
 # Load environment variables
 load_dotenv()
@@ -320,10 +330,92 @@ class ChatManager:
 
 # Create global chat manager instance
 chat_manager = ChatManager()
+context_agent = ContextAgent()
 
+# Initialize Firebase Admin SDK (replace 'path/to/your/serviceAccountKey.json')
+try:
+    # Check if already initialized to prevent errors during hot-reloading
+    if not firebase_admin._apps:
+        cred = credentials.Certificate('thesys-d9c76-firebase-adminsdk-fbsvc-2bc5d18817.json') # IMPORTANT: Update this path
+        firebase_admin.initialize_app(cred)
+    logger.info("Firebase Admin SDK initialized successfully.")
+except Exception as e:
+    logger.error(f"Failed to initialize Firebase Admin SDK: {e}", exc_info=True)
+    # Handle initialization error appropriately - maybe exit or disable authenticated routes
+
+# --- Helper function to verify token ---
+def verify_firebase_token(request):
+    """Verifies the Firebase ID token from the Authorization header."""
+    id_token = request.headers.get('Authorization', '').split('Bearer ')[-1]
+    if not id_token:
+        logger.warning("No Firebase ID token provided in Authorization header.")
+        return None
+    try:
+        decoded_token = auth.verify_id_token(id_token)
+        logger.info(f"Successfully verified token for UID: {decoded_token.get('uid')}")
+        return decoded_token.get('uid') # Return the user ID
+    except auth.ExpiredIdTokenError:
+        logger.warning("Firebase ID token has expired.")
+        return None
+    except Exception as e:
+        logger.error(f"Error verifying Firebase ID token: {e}", exc_info=True)
+        return None
+
+# --- New Endpoints ---
+@app.route('/api/activity', methods=['GET'])
+async def get_activity():
+    # TODO: Implement proper user authentication to get user_id
+    user_id = "user_123" # Placeholder for authenticated user ID
+    try:
+        limit = request.args.get('limit', 10, type=int)
+        activities = context_agent.get_recent_activities(user_id, limit=limit)
+        return jsonify(activities)
+    except Exception as e:
+        logger.error(f"Error getting activity for user {user_id}: {str(e)}")
+        return jsonify({'error': 'Failed to retrieve activity'}), 500
+
+@app.route('/api/dashboard', methods=['GET'])
+async def get_dashboard_data():
+    user_id = verify_firebase_token(request) # Verify the token
+    if not user_id:
+        return jsonify({'error': 'Unauthorized or invalid token'}), 401 # Return 401 if invalid/missing
+
+    # Now use the verified user_id instead of the placeholder
+    try:
+        # Pass the verified user_id to your context agent
+        dashboard_data = context_agent.get_dashboard_data(user_id)
+        return jsonify(dashboard_data)
+    except Exception as e:
+        logger.error(f"Error getting dashboard data for user {user_id}: {str(e)}", exc_info=True) # Log with verified user_id
+        return jsonify({'error': 'Failed to retrieve dashboard data'}), 500
+
+@app.route('/api/log_activity', methods=['POST'])
+async def log_user_activity():
+    # TODO: Implement proper user authentication to get user_id
+    user_id = "user_123" # Placeholder for authenticated user ID
+    try:
+        data = await request.get_json()
+        activity_type = data.get('type')
+        details = data.get('details')
+
+        if not activity_type:
+            return jsonify({'error': 'Activity type is required'}), 400
+
+        context_agent.log_activity(user_id, activity_type, details)
+        return jsonify({'status': 'success', 'message': 'Activity logged'}), 200
+
+    except Exception as e:
+        logger.error(f"Error logging activity for user {user_id}: {str(e)}")
+        return jsonify({'error': 'Failed to log activity'}), 500
+# --- End New Endpoints ---
+
+# Modify /api/chat to log activity (optional)
 @app.route('/api/chat', methods=['POST'])
 async def chat():
-    """Chat endpoint using vector context."""
+    user_id = verify_firebase_token(request) # Verify token
+    if not user_id:
+        return jsonify({'error': 'Unauthorized or invalid token'}), 401
+
     try:
         data = request.json
         if not data:
@@ -335,7 +427,6 @@ async def chat():
             logger.error("No message provided")
             return jsonify({'error': 'Message is required'}), 400
             
-        user_id = data.get('user_id', str(uuid.uuid4()))
         previous_context_vector = data.get('previous_context_vector')
         # Get temperature from payload, default to 0.7 if not provided or invalid
         try:
@@ -349,7 +440,9 @@ async def chat():
 
         logger.info(f"Processing chat for user {user_id} with temp {temperature}. Has vector: {previous_context_vector is not None}")
         
-        # Pass temperature to process_message
+        # Log activity (e.g., message sent)
+        context_agent.log_activity(user_id, 'sent_message', {'message_length': len(message)})
+
         response_data = await chat_manager.process_message(
             message=message, 
             user_id=user_id, 
@@ -359,13 +452,20 @@ async def chat():
         
         if 'error' in response_data:
             logger.error(f"Error processing message: {response_data['error']}")
+            # Log error activity
+            context_agent.log_activity(user_id, 'chat_error', {'error_message': response_data['error']})
             return jsonify({'error': response_data['error']}), 500
             
+        # Log response activity
+        if 'error' not in response_data:
+             context_agent.log_activity(user_id, 'received_response', {'response_length': len(response_data.get('text',''))})
+
         return jsonify(response_data) 
         
     except Exception as e:
-        logger.error(f"Error in chat endpoint: {str(e)}", exc_info=True)
-        return jsonify({'error': str(e), 'response_vector': None}), 500
+        logger.error(f"Error in chat endpoint for user {user_id}: {str(e)}", exc_info=True) # Log with verified user_id
+        context_agent.log_activity(user_id, 'chat_error', {'error_message': str(e)})
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/factcheck', methods=['POST'])
 def factcheck():

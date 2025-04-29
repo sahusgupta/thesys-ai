@@ -4,16 +4,8 @@ import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
 import { FiSend, FiUpload, FiPlus, FiEdit, FiTrash2, FiSearch, FiStar, FiDownload } from 'react-icons/fi';
 import { AiOutlineLoading3Quarters } from 'react-icons/ai';
+import MessageBubble from '../components/MessageBubble'; // Import the separate component
 
-/**
- * This version persists chats in localStorage.
- * Additional functionality is included:
- * 1) Search bar to filter messages in the active chat.
- * 2) Ability to pin messages and view them separately.
- * 3) A download button to export the current chat to a text file.
- * 
- * The reference for isGenerating remains at line 152.
- */
 
 const formatResponse = (text) => {
   if (!text) return 'No response.';
@@ -24,47 +16,7 @@ const formatResponse = (text) => {
   return text;
 };
 
-const MessageBubble = React.memo(({ message, onPinToggle }) => {
-  const { sender, text, timestamp, pinned } = message;
-  const isUser = sender === 'User';
-
-  return (
-    <div className={`my-2 flex ${isUser ? 'justify-end' : 'justify-start'} items-start`}>
-      {!isUser && (
-        <div className="mr-3 flex-shrink-0 bg-gray-300 text-white h-8 w-8 rounded-full flex items-center justify-center">
-          T
-        </div>
-      )}
-      <div
-        className={`max-w-[70%] p-3 rounded-xl shadow-sm ${
-          isUser ? 'bg-[#4B8795] text-white' : 'bg-[#F0F4F6] text-gray-800'
-        } relative`}
-      >
-        <div className="text-xs font-semibold mb-1 flex items-center justify-between">
-          <span>{sender}</span>
-          {/* Pin toggle */}
-          <button
-            onClick={() => onPinToggle(message.id)}
-            className={`ml-2 text-xs p-1 rounded ${
-              pinned ? 'text-yellow-500' : 'text-gray-400 hover:text-yellow-500'
-            } transition`}
-          >
-            <FiStar />
-          </button>
-        </div>
-        <div className="whitespace-pre-wrap break-words text-sm">{text}</div>
-        <div className="text-xs text-right opacity-70 mt-1">
-          {new Date(timestamp).toLocaleTimeString()}
-        </div>
-      </div>
-      {isUser && (
-        <div className="ml-3 flex-shrink-0 bg-[#4B8795] text-white h-8 w-8 rounded-full flex items-center justify-center">
-          U
-        </div>
-      )}
-    </div>
-  );
-});
+// MessageBubble component is now properly imported at the top of the file
 
 export default function Chat() {
   /**
@@ -223,7 +175,26 @@ export default function Chat() {
       if (error) {
         addMessageToActiveChat('Thesys', `Error: ${error}`);
       } else {
-        addMessageToActiveChat('Thesys', formatResponse(text));
+        const responseText = text || '';
+        // Store the full response including raw_data for the assistant message
+        const assistantMessage = {
+          id: Date.now(),
+          sender: 'Assistant',
+          text: '', // Will be populated by typeMessage
+          timestamp: new Date().toISOString(),
+          raw_data: data.raw_data || null, // Store raw_data
+          isTyping: true, // Add flag for typing effect
+        };
+
+        // Fix: Update the chat messages correctly
+        const activeChat = getActiveChat();
+        if (activeChat) {
+          updateChat(activeChatId, {
+            messages: [...activeChat.messages, assistantMessage]
+          });
+          
+          await typeMessage(responseText, assistantMessage.id); // Pass ID to update the correct message
+        }
       }
     } catch (err) {
       if (axios.isCancel(err)) {
@@ -237,6 +208,67 @@ export default function Chat() {
       setIsGenerating(false);
       cancelToken.current = null;
     }
+  };
+
+  const typeMessage = async (text, messageId) => { // Accept messageId
+    setIsGenerating(true);
+    let messageToType = '';
+    if (typeof text === 'string') {
+      messageToType = text;
+    } else {
+      messageToType = "Received unexpected response format.";
+      console.error("typeMessage received non-string:", text);
+    }
+
+    if (!messageToType?.trim()) {
+      messageToType = "I apologize, but I couldn't generate a proper response. Please try again.";
+    }
+
+    // Find the message to update
+    const activeChat = getActiveChat();
+    if (!activeChat) {
+      setIsGenerating(false);
+      return;
+    }
+    
+    const messageIndex = activeChat.messages.findIndex(msg => msg.id === messageId);
+
+    if (messageIndex === -1) {
+      console.error("Could not find message to type into:", messageId);
+      setIsGenerating(false);
+      return; // Exit if message not found
+    }
+
+    let typedText = '';
+    for (let i = 0; i < messageToType.length; i++) {
+      await new Promise(resolve => setTimeout(resolve, 20)); // Typing speed
+      typedText += messageToType[i];
+
+      // Update the specific message in state
+      const updatedMessages = [...activeChat.messages];
+      updatedMessages[messageIndex] = {
+        ...updatedMessages[messageIndex],
+        text: typedText,
+      };
+      
+      updateChat(activeChatId, { messages: updatedMessages });
+      
+      // Scroll logic remains the same
+      if (scrollRef.current) {
+        scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+      }
+    }
+
+    // Final update to remove typing indicator
+    const finalMessages = [...activeChat.messages];
+    finalMessages[messageIndex] = {
+      ...finalMessages[messageIndex],
+      text: messageToType, // Ensure full text is set
+      isTyping: false, // Remove typing flag
+    };
+    
+    updateChat(activeChatId, { messages: finalMessages });
+    setIsGenerating(false);
   };
 
   const handleKeyDown = (e) => {
@@ -469,6 +501,17 @@ export default function Chat() {
               onPinToggle={handlePinToggle}
             />
           ))}
+          {/* Display typing indicator if the last message is from assistant and typing */}
+          {getActiveChat()?.messages.length > 0 && 
+           getActiveChat().messages[getActiveChat().messages.length - 1]?.sender === 'Assistant' && 
+           getActiveChat().messages[getActiveChat().messages.length - 1]?.isTyping && (
+             <div className="flex justify-start items-start my-2">
+               <div className="mr-3 flex-shrink-0 bg-gray-300 text-white h-8 w-8 rounded-full flex items-center justify-center">T</div>
+               <div className="max-w-[70%] p-3 rounded-xl shadow-sm bg-[#F0F4F6] text-gray-800">
+                 <span className="italic text-gray-500">Typing...</span>
+               </div>
+             </div>
+           )}
         </div>
 
         {/* Input area */}
