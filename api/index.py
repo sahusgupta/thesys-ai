@@ -19,7 +19,7 @@ from typing import Dict, Any, List, Optional
 import psycopg2
 import time
 import asyncio
-from backend.context_agent import ContextAgent # Ensure context_agent is initialized
+from backend.context_agent import ContextAgent as CA # Ensure context_agent is initialized
 
 # Load environment variables
 load_dotenv()
@@ -330,36 +330,7 @@ class ChatManager:
 
 # Create global chat manager instance
 chat_manager = ChatManager()
-context_agent = ContextAgent()
-
-# Initialize Firebase Admin SDK (replace 'path/to/your/serviceAccountKey.json')
-try:
-    # Check if already initialized to prevent errors during hot-reloading
-    if not firebase_admin._apps:
-        cred = credentials.Certificate('thesys-d9c76-firebase-adminsdk-fbsvc-2bc5d18817.json') # IMPORTANT: Update this path
-        firebase_admin.initialize_app(cred)
-    logger.info("Firebase Admin SDK initialized successfully.")
-except Exception as e:
-    logger.error(f"Failed to initialize Firebase Admin SDK: {e}", exc_info=True)
-    # Handle initialization error appropriately - maybe exit or disable authenticated routes
-
-# --- Helper function to verify token ---
-def verify_firebase_token(request):
-    """Verifies the Firebase ID token from the Authorization header."""
-    id_token = request.headers.get('Authorization', '').split('Bearer ')[-1]
-    if not id_token:
-        logger.warning("No Firebase ID token provided in Authorization header.")
-        return None
-    try:
-        decoded_token = auth.verify_id_token(id_token)
-        logger.info(f"Successfully verified token for UID: {decoded_token.get('uid')}")
-        return decoded_token.get('uid') # Return the user ID
-    except auth.ExpiredIdTokenError:
-        logger.warning("Firebase ID token has expired.")
-        return None
-    except Exception as e:
-        logger.error(f"Error verifying Firebase ID token: {e}", exc_info=True)
-        return None
+context_agent = CA()
 
 # --- New Endpoints ---
 @app.route('/api/activity', methods=['GET'])
@@ -376,18 +347,15 @@ async def get_activity():
 
 @app.route('/api/dashboard', methods=['GET'])
 async def get_dashboard_data():
-    user_id = verify_firebase_token(request) # Verify the token
-    if not user_id:
-        return jsonify({'error': 'Unauthorized or invalid token'}), 401 # Return 401 if invalid/missing
-
-    # Now use the verified user_id instead of the placeholder
+    # TODO: Get actual user ID from authentication
+    user_id = "jsR4QxWNUaZ7YcJpuvzapkpPSxJ3"  # Use the same user ID as ScholarAgent
+    
     try:
-        # Pass the verified user_id to your context agent
         dashboard_data = context_agent.get_dashboard_data(user_id)
         return jsonify(dashboard_data)
     except Exception as e:
-        logger.error(f"Error getting dashboard data for user {user_id}: {str(e)}", exc_info=True) # Log with verified user_id
-        return jsonify({'error': 'Failed to retrieve dashboard data'}), 500
+        logger.error(f"Error getting dashboard data: {str(e)}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/log_activity', methods=['POST'])
 async def log_user_activity():
@@ -412,10 +380,9 @@ async def log_user_activity():
 # Modify /api/chat to log activity (optional)
 @app.route('/api/chat', methods=['POST'])
 async def chat():
-    user_id = verify_firebase_token(request) # Verify token
-    if not user_id:
-        return jsonify({'error': 'Unauthorized or invalid token'}), 401
-
+    # Remove token verification
+    user_id = "test_user"  # Placeholder for development
+    
     try:
         data = request.json
         if not data:
@@ -428,43 +395,19 @@ async def chat():
             return jsonify({'error': 'Message is required'}), 400
             
         previous_context_vector = data.get('previous_context_vector')
-        # Get temperature from payload, default to 0.7 if not provided or invalid
-        try:
-            temperature = float(data.get('temperature', 0.7))
-            if not (0.0 <= temperature <= 1.0):
-                 logger.warning(f"Invalid temperature received ({temperature}), using default 0.7")
-                 temperature = 0.7
-        except (ValueError, TypeError):
-             logger.warning(f"Could not parse temperature ('{data.get('temperature')}'), using default 0.7")
-             temperature = 0.7
-
-        logger.info(f"Processing chat for user {user_id} with temp {temperature}. Has vector: {previous_context_vector is not None}")
+        temperature = float(data.get('temperature', 0.7))
         
-        # Log activity (e.g., message sent)
-        context_agent.log_activity(user_id, 'sent_message', {'message_length': len(message)})
-
         response_data = await chat_manager.process_message(
             message=message, 
-            user_id=user_id, 
-            temperature=temperature, # Pass validated temperature
+            user_id=user_id,
+            temperature=temperature,
             previous_context_vector=previous_context_vector
         )
         
-        if 'error' in response_data:
-            logger.error(f"Error processing message: {response_data['error']}")
-            # Log error activity
-            context_agent.log_activity(user_id, 'chat_error', {'error_message': response_data['error']})
-            return jsonify({'error': response_data['error']}), 500
-            
-        # Log response activity
-        if 'error' not in response_data:
-             context_agent.log_activity(user_id, 'received_response', {'response_length': len(response_data.get('text',''))})
-
-        return jsonify(response_data) 
+        return jsonify(response_data)
         
     except Exception as e:
-        logger.error(f"Error in chat endpoint for user {user_id}: {str(e)}", exc_info=True) # Log with verified user_id
-        context_agent.log_activity(user_id, 'chat_error', {'error_message': str(e)})
+        logger.error(f"Error in chat endpoint: {str(e)}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/factcheck', methods=['POST'])

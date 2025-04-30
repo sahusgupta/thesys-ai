@@ -19,7 +19,7 @@ import uuid
 from models.summarization import generate_summary
 
 class ScholarAgent:
-    def __init__(self, base_url: str = "http://localhost:5000"):
+    def __init__(self, context_agent=None, base_url: str = "http://localhost:5000"):
         # Configure logging first
         logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
         self.logger = logging.getLogger(__name__)
@@ -30,6 +30,7 @@ class ScholarAgent:
             "User-Agent": "ThesysAIResearchAgent/1.0"
         }
         
+        self.context_agent = context_agent
 
         # Create papers directory if it doesn't exist
         self.papers_dir = Path("data/papers")
@@ -340,6 +341,11 @@ class ScholarAgent:
                 # Or should this be a critical failure? Deciding to return success for now.
                 # Consider if a rollback mechanism for S3 is needed if DB fails.
 
+            # After successful upload (around line 344):
+            if self.context_agent:
+                self.context_agent.add_uploaded_file(user_id, file_name)
+                self.logger.info(f"Logged upload activity for {file_name}")
+
             # Return success response (even if summary/DB failed, S3 succeeded)
             return {
                 'status': 'success',
@@ -519,15 +525,15 @@ class ScholarAgent:
             self.logger.error(f"Error deleting file: {str(e)}", exc_info=True)
             return False
 
-    async def add_paper_from_url(self, user_id: str, paper_details: Dict) -> Dict:
+    async def add_paper_from_url(self, user_id: str, url: str) -> Dict:
         """Fetches paper PDF from URL, uploads to S3, and saves metadata to DB."""
         file_id = str(uuid.uuid4()) # Generate unique ID for this file
         pdf_data = None
         s3_key = None
         
         # Extract necessary details safely
-        paper_url = paper_details.get('url')
-        file_name_base = paper_details.get('title', f'paper_{file_id}')
+        paper_url = url
+        file_name_base = url.split('/')[-1]
         # Sanitize filename (basic example)
         safe_file_name = "".join(c if c.isalnum() or c in ('_', '-') else '_' for c in file_name_base)
         file_name = f"{safe_file_name[:100]}.pdf" # Ensure .pdf extension and limit length
@@ -536,7 +542,6 @@ class ScholarAgent:
             self.logger.info(f"Attempting to add paper for user {user_id} from URL: {paper_url}")
             if not user_id: raise ValueError("User ID is required")
             if not paper_url: raise ValueError("Paper URL is required")
-            if not paper_details: raise ValueError("Paper details are required")
 
             # 1. Fetch PDF Content from URL
             try:
@@ -618,11 +623,15 @@ class ScholarAgent:
                 # For now, log but continue. Consider cleanup (e.g., delete S3 object).
                 pass 
 
+            # After successful S3 upload, log the activity
+            if self.context_agent:
+                self.context_agent.add_uploaded_file(user_id, file_name)
+                self.logger.info(f"Logged upload activity for {file_name}")
+
             return {
                 'status': 'success',
                 'file_id': file_id,
-                'message': 'Paper successfully added to your library.',
-                's3_key': s3_key
+                'file_name': file_name
             }
 
         except ValueError as ve:
@@ -709,3 +718,14 @@ class ScholarAgent:
         except Exception as e:
             self.logger.error(f"Error generating presigned URL for file {file_id}: {e}", exc_info=True)
             return None
+
+    async def like_paper(self, user_id: str, file_name: str) -> Dict:
+        """Add a paper to user's liked papers."""
+        try:
+            if self.context_agent:
+                self.context_agent.add_liked_file(user_id, file_name)
+                self.logger.info(f"Logged like activity for {file_name}")
+            return {'status': 'success', 'message': f'Paper {file_name} liked successfully'}
+        except Exception as e:
+            self.logger.error(f"Error liking paper: {str(e)}")
+            return {'status': 'error', 'message': str(e)}

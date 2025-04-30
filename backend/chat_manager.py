@@ -10,11 +10,15 @@ class ChatManager:
     def __init__(self):
         self.logger = logging.getLogger(__name__)
         
-        # Initialize agents
-        self.scholar_agent = ScholarAgent()
+        # Initialize context agent first
+        self.context_agent = ContextAgent()
+        
+        # Pass context_agent to ScholarAgent
+        self.scholar_agent = ScholarAgent(context_agent=self.context_agent)
+        
+        # Initialize other agents
         self.citation_agent = CitationAgent()
         self.factcheck_agent = FactCheckAgent()
-        self.context_agent = ContextAgent()
         
         # Store chat sessions
         self.chat_sessions = {}
