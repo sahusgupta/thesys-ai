@@ -2,6 +2,8 @@
 import React, { useState, useEffect } from 'react';
 import { FileText, Download, Trash2, Loader2, AlertCircle } from 'lucide-react';
 import axios from 'axios';
+import { addActivity, ACTIVITY_TYPES } from '../utils/activityTracker';
+import { FiUpload, FiFile, FiTrash2, FiDownload, FiSearch } from 'react-icons/fi';
 
 const Library = () => {
   const [files, setFiles] = useState([]);
@@ -10,6 +12,7 @@ const Library = () => {
   const [selectedFile, setSelectedFile] = useState(null);
   const [viewMode, setViewMode] = useState('list');
   const [uploading, setUploading] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
 
   // Mock user ID - replace with actual user authentication
   const userId = 'current_user_id';
@@ -46,6 +49,15 @@ const Library = () => {
     try {
       setUploading(true);
       setError(null);
+      
+      // Track file upload immediately
+      console.log('=== FILE UPLOAD TRIGGERED ===');
+      console.log('File:', file.name);
+      addActivity(ACTIVITY_TYPES.FILE_DOWNLOADED, {
+        fileName: file.name,
+        fileType: file.type,
+        size: file.size
+      });
       
       const formData = new FormData();
       formData.append('file', file);
@@ -142,187 +154,133 @@ const Library = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 py-8 px-4 sm:px-6 lg:px-8">
-      <div className="max-w-7xl mx-auto">
-        <div className="flex justify-between items-center mb-8">
-          <h1 className="text-3xl font-bold text-gray-900">My Library</h1>
-          <div className="flex gap-4">
-            <div className="relative">
-              <input
-                type="file"
-                id="file-upload"
-                className="hidden"
-                onChange={handleFileUpload}
-                accept=".pdf,.doc,.docx,.txt"
-              />
-              <label
-                htmlFor="file-upload"
-                className="bg-[#407986] text-white px-4 py-2 rounded-lg hover:bg-[#2c5a66] cursor-pointer flex items-center gap-2"
-              >
-                {uploading ? (
-                  <Loader2 className="animate-spin" size={20} />
-                ) : (
-                  <>
-                    <FileText size={20} />
-                    Upload File
-                  </>
-                )}
-              </label>
+    <div className="p-8 space-y-6">
+      <div className="flex justify-between items-center">
+        <h1 className="text-2xl font-semibold text-foreground">Library</h1>
+        <label className="btn-primary px-4 py-2 rounded-md cursor-pointer">
+          <span>Upload File</span>
+          <input type="file" className="hidden" onChange={handleFileUpload} accept=".pdf,.doc,.docx,.txt" />
+        </label>
+      </div>
+
+      {/* Search and Filters */}
+      <div className="bg-card text-card-foreground rounded-lg border shadow-sm p-4">
+        <div className="flex items-center space-x-4">
+          <div className="flex-1 relative">
+            <FiSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+            <input
+              type="text"
+              placeholder="Search documents..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full pl-10 bg-background border border-input rounded-md px-4 py-2 focus:outline-none focus:ring-2 focus:ring-ring"
+            />
+          </div>
+          <select className="bg-background border border-input rounded-md px-4 py-2 focus:outline-none focus:ring-2 focus:ring-ring">
+            <option value="all">All Types</option>
+            <option value="pdf">PDF</option>
+            <option value="doc">Word</option>
+            <option value="excel">Excel</option>
+          </select>
+        </div>
+      </div>
+
+      {/* Documents List */}
+      <div className="bg-card text-card-foreground rounded-lg border shadow-sm">
+        <div className="p-4 border-b border-border">
+          <h2 className="font-semibold">Documents</h2>
+        </div>
+        <div className="divide-y divide-border">
+          {files.map((file) => (
+            <div key={file.id} className="p-4 hover:bg-accent/10 transition-colors">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-4">
+                  <div className="p-2 bg-primary/10 rounded-md">
+                    <FiFile className="text-primary" size={20} />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-medium">{file.file_name}</h3>
+                    <p className="text-xs text-muted-foreground">
+                      {getFileIcon(file.file_type)} • {file.size} • {formatDate(file.created_at)}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <button
+                    onClick={() => handleViewFile(file)}
+                    className="p-2 hover:bg-accent hover:text-accent-foreground rounded-md transition-colors"
+                  >
+                    <FiDownload size={18} />
+                  </button>
+                  <button
+                    onClick={() => handleDeleteFile(file.id)}
+                    className="p-2 hover:bg-destructive hover:text-destructive-foreground rounded-md transition-colors"
+                  >
+                    <FiTrash2 size={18} />
+                  </button>
+                </div>
+              </div>
             </div>
-            <div className="flex gap-2">
+          ))}
+        </div>
+      </div>
+
+      {/* Upload Zone */}
+      <div className="bg-card text-card-foreground rounded-lg border shadow-sm p-8 border-dashed">
+        <div className="flex flex-col items-center justify-center text-center">
+          <FiUpload size={40} className="text-muted-foreground mb-4" />
+          <h3 className="text-lg font-medium mb-2">Drop files here</h3>
+          <p className="text-sm text-muted-foreground mb-4">
+            or click to select files
+          </p>
+          <label className="btn-secondary px-4 py-2 rounded-md cursor-pointer">
+            <span>Browse Files</span>
+            <input type="file" className="hidden" multiple />
+          </label>
+        </div>
+      </div>
+
+      {selectedFile && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto p-6">
+            <div className="flex justify-between items-start mb-4">
+              <div className="flex items-center gap-3">
+                <span className="text-3xl">{getFileIcon(selectedFile.file_type)}</span>
+                <h2 className="text-2xl font-semibold">{selectedFile.file_name}</h2>
+              </div>
               <button
-                onClick={() => setViewMode('list')}
-                className={`p-2 rounded-lg ${viewMode === 'list' ? 'bg-[#407986] text-white' : 'bg-gray-200 text-gray-700'}`}
+                onClick={() => setSelectedFile(null)}
+                className="text-gray-500 hover:text-gray-700"
               >
-                List View
+                ✕
               </button>
-              <button
-                onClick={() => setViewMode('grid')}
-                className={`p-2 rounded-lg ${viewMode === 'grid' ? 'bg-[#407986] text-white' : 'bg-gray-200 text-gray-700'}`}
-              >
-                Grid View
-              </button>
+            </div>
+            
+            <div className="prose max-w-none">
+              <div className="flex items-center justify-between mb-4">
+                <p className="text-sm text-gray-500">Uploaded on {formatDate(selectedFile.created_at)}</p>
+                <a
+                  href={selectedFile.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[#407986] hover:text-[#2c5a66] flex items-center gap-1"
+                >
+                  <Download size={16} />
+                  Download File
+                </a>
+              </div>
+              
+              {selectedFile.content ? (
+                <pre className="whitespace-pre-wrap">{selectedFile.content}</pre>
+              ) : (
+                <div className="text-center py-8">
+                  <p className="text-gray-500">File content not available for preview</p>
+                </div>
+              )}
             </div>
           </div>
         </div>
-
-        {error && (
-          <div className="mb-6 bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-lg flex items-center gap-2">
-            <AlertCircle size={20} />
-            {error}
-          </div>
-        )}
-
-        {loading ? (
-          <div className="flex justify-center items-center h-64">
-            <Loader2 className="animate-spin text-[#407986]" size={32} />
-          </div>
-        ) : files.length === 0 ? (
-          <div className="text-center py-12 bg-white rounded-lg shadow-sm border border-gray-200">
-            <FileText className="mx-auto h-12 w-12 text-gray-400" />
-            <h3 className="mt-2 text-sm font-medium text-gray-900">No files</h3>
-            <p className="mt-1 text-sm text-gray-500">Get started by uploading a new file.</p>
-          </div>
-        ) : viewMode === 'list' ? (
-          <div className="bg-white shadow-sm rounded-lg border border-gray-200 overflow-hidden">
-            <div className="divide-y divide-gray-200">
-              {files.map((file) => (
-                <div key={file.id} className="p-4 hover:bg-gray-50 transition-colors">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-4">
-                      <span className="text-2xl">{getFileIcon(file.file_type)}</span>
-                      <div>
-                        <h3 className="text-lg font-medium text-gray-900">{file.file_name}</h3>
-                        <p className="text-sm text-gray-500">Uploaded on {formatDate(file.created_at)}</p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => handleViewFile(file)}
-                        className="p-2 text-gray-500 hover:text-[#407986] rounded-full hover:bg-gray-100"
-                      >
-                        <FileText size={20} />
-                      </button>
-                      <a
-                        href={file.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="p-2 text-gray-500 hover:text-[#407986] rounded-full hover:bg-gray-100"
-                      >
-                        <Download size={20} />
-                      </a>
-                      <button
-                        onClick={() => handleDeleteFile(file.id)}
-                        className="p-2 text-gray-500 hover:text-red-500 rounded-full hover:bg-gray-100"
-                      >
-                        <Trash2 size={20} />
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {files.map((file) => (
-              <div key={file.id} className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 hover:shadow-md transition-shadow">
-                <div className="flex flex-col h-full">
-                  <div className="flex items-center gap-3 mb-4">
-                    <span className="text-3xl">{getFileIcon(file.file_type)}</span>
-                    <h3 className="text-lg font-medium text-gray-900 truncate">{file.file_name}</h3>
-                  </div>
-                  <p className="text-sm text-gray-500 mb-4">Uploaded on {formatDate(file.created_at)}</p>
-                  <div className="mt-auto flex justify-end gap-2">
-                    <button
-                      onClick={() => handleViewFile(file)}
-                      className="p-2 text-gray-500 hover:text-[#407986] rounded-full hover:bg-gray-100"
-                    >
-                      <FileText size={20} />
-                    </button>
-                    <a
-                      href={file.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="p-2 text-gray-500 hover:text-[#407986] rounded-full hover:bg-gray-100"
-                    >
-                      <Download size={20} />
-                    </a>
-                    <button
-                      onClick={() => handleDeleteFile(file.id)}
-                      className="p-2 text-gray-500 hover:text-red-500 rounded-full hover:bg-gray-100"
-                    >
-                      <Trash2 size={20} />
-                    </button>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {selectedFile && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4">
-            <div className="bg-white rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto p-6">
-              <div className="flex justify-between items-start mb-4">
-                <div className="flex items-center gap-3">
-                  <span className="text-3xl">{getFileIcon(selectedFile.file_type)}</span>
-                  <h2 className="text-2xl font-semibold">{selectedFile.file_name}</h2>
-                </div>
-                <button
-                  onClick={() => setSelectedFile(null)}
-                  className="text-gray-500 hover:text-gray-700"
-                >
-                  ✕
-                </button>
-              </div>
-              
-              <div className="prose max-w-none">
-                <div className="flex items-center justify-between mb-4">
-                  <p className="text-sm text-gray-500">Uploaded on {formatDate(selectedFile.created_at)}</p>
-                  <a
-                    href={selectedFile.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-[#407986] hover:text-[#2c5a66] flex items-center gap-1"
-                  >
-                    <Download size={16} />
-                    Download File
-                  </a>
-                </div>
-                
-                {selectedFile.content ? (
-                  <pre className="whitespace-pre-wrap">{selectedFile.content}</pre>
-                ) : (
-                  <div className="text-center py-8">
-                    <p className="text-gray-500">File content not available for preview</p>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
+      )}
     </div>
   );
 };

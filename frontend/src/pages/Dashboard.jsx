@@ -1,115 +1,54 @@
 // src/pages/Dashboard.jsx
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { FiActivity, FiMessageSquare, FiUsers, FiStar } from 'react-icons/fi'; // Example icons
-import { useAuth } from '../context/AuthContext'; // Import useAuth
+import { FiMessageSquare, FiUsers, FiStar, FiFile, FiSearch, FiUpload, FiBarChart2, FiBook, FiTrendingUp } from 'react-icons/fi';
+import { useAuth } from '../context/AuthContext';
 
 const Dashboard = () => {
-  console.log("Dashboard: Component rendering/rendered."); // Log component render
-
   const [dashboardData, setDashboardData] = useState({
-    recent_activities: [],
-    stats: { num_chats: 0, total_messages: 0, pinned_messages: 0 },
+    stats: { num_chats: 0, total_messages: 0, pinned_messages: 0, total_files: 0 },
+    recent_files: [],
+    usage_stats: { daily_usage: 0, weekly_usage: 0, monthly_usage: 0 }
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const { currentUser } = useAuth(); // Get currentUser for potential auth header
-
-  console.log("Dashboard: currentUser state:", currentUser); // Log currentUser state
+  const { currentUser } = useAuth();
 
   useEffect(() => {
-    // Log when the effect itself runs and the value of currentUser at that time
-    console.log("Dashboard: useEffect triggered. currentUser:", currentUser);
-
     const fetchData = async () => {
-      console.log("Dashboard: fetchData function called."); // Log start of fetchData
       if (!currentUser) {
-        console.log("Dashboard: No currentUser, skipping fetch.");
-        setLoading(false); // Stop loading indicator
-        setError("Please log in to view the dashboard."); // Optional: set an error message
-        return; // Exit fetchData early
+        setLoading(false);
+        setError("Please log in to view the dashboard.");
+        return;
       }
 
       setLoading(true);
       setError(null);
       try {
         let headers = {};
-        // --- Authentication Header ---
-
         if (currentUser) {
-          console.log("Dashboard: Attempting to get ID token...");
           const token = await currentUser.getIdToken();
-          console.log("Dashboard: Token retrieved:", token ? "Yes" : "No");
           headers['Authorization'] = `Bearer ${token}`;
-        } else {
-          console.log("Dashboard: No currentUser, sending request without Authorization header.");
         }
-        // --- End Authentication Header ---
 
-        console.log("Dashboard: Preparing to make API call to /api/dashboard with headers:", headers); // Log before axios call
-        const response = await axios.get('/api/dashboard', { headers }); // Send headers
-
-        console.log("Dashboard: API call successful. Response Data:", response.data);
+        const response = await axios.get('/api/dashboard', { headers });
         setDashboardData(response.data);
       } catch (err) {
-        console.error("Dashboard: Error during fetchData:", err); // Log the full error
-        if (err.response) {
-            console.error("Dashboard: Error response data:", err.response.data);
-            console.error("Dashboard: Error response status:", err.response.status);
-        } else if (err.request) {
-            console.error("Dashboard: Error request (no response received):", err.request);
-        } else {
-            console.error('Dashboard: Error message (request setup issue?):', err.message);
-        }
+        console.error("Error during fetchData:", err);
         setError('Failed to load dashboard data. Please check console for details.');
       } finally {
-        console.log("Dashboard: fetchData finished.");
         setLoading(false);
       }
     };
 
-    // Only call fetchData if currentUser is defined, or adjust based on whether
-    // your endpoint *requires* auth vs. allows anonymous access
-    // If the endpoint *requires* auth, waiting for currentUser is correct.
-    if (currentUser !== undefined) { // Check if auth state is determined (not undefined)
-        console.log("Dashboard: Calling fetchData...");
-        fetchData();
-    } else {
-        console.log("Dashboard: Waiting for currentUser state to be determined...");
-        // Optionally set loading to false or show a specific "authenticating" message
-        // setLoading(false);
+    if (currentUser !== undefined) {
+      fetchData();
     }
-
-  }, [currentUser]); // Dependency array remains [currentUser]
-
-  const formatTimestamp = (isoString) => {
-    if (!isoString) return 'N/A';
-    return new Date(isoString).toLocaleString();
-  };
-
-  const getActivityDescription = (activity) => {
-      switch(activity.type) {
-          case 'sent_message':
-              return `Sent a message (${activity.details?.message_length || 0} chars)`;
-          case 'received_response':
-              return `Received a response (${activity.details?.response_length || 0} chars)`;
-          case 'chat_error':
-              return `Encountered an error during chat`;
-          case 'pinned_message':
-              return `Pinned a message`; // Add details if logged
-          case 'downloaded_paper':
-              return `Downloaded paper: ${activity.details?.title || 'Unknown'}`; // Add details if logged
-          default:
-              return activity.type.replace(/_/g, ' '); // Default formatting
-      }
-  }
-
-  console.log("Dashboard: Rendering state - loading:", loading, "error:", error, "data:", dashboardData);
+  }, [currentUser]);
 
   if (loading) {
-    // Added check for initial undefined currentUser state
     if (currentUser === undefined) {
-        return <div className="p-6 text-center">Authenticating...</div>;
+      return <div className="p-6 text-center">Authenticating...</div>;
     }
     return <div className="p-6 text-center">Loading dashboard...</div>;
   }
@@ -118,47 +57,126 @@ const Dashboard = () => {
     return <div className="p-6 text-center text-red-600">{error}</div>;
   }
 
-  // Ensure dashboardData and its properties exist before destructuring
-  const recent_activities = dashboardData?.recent_activities || [];
-  const stats = dashboardData?.stats || { num_chats: 0, total_messages: 0, pinned_messages: 0 };
+  const stats = dashboardData?.stats || { num_chats: 0, total_messages: 0, pinned_messages: 0, total_files: 0 };
+  const recent_files = dashboardData?.recent_files || [];
+  const usage_stats = dashboardData?.usage_stats || { daily_usage: 0, weekly_usage: 0, monthly_usage: 0 };
+
+  const statsGrid = [
+    { title: 'Total Chats', value: stats.num_chats, icon: <FiMessageSquare size={24} />, change: '+12%' },
+    { title: 'Documents Analyzed', value: stats.total_files, icon: <FiBook size={24} />, change: '+8%' },
+    { title: 'Searches', value: stats.total_messages, icon: <FiSearch size={24} />, change: '+23%' },
+  ];
+
+  const recentActivity = [
+    { type: 'chat', title: 'Research on Neural Networks', time: '2 hours ago' },
+    { type: 'document', title: 'Machine Learning Basics.pdf', time: '4 hours ago' },
+    { type: 'search', title: 'Deep Learning Applications', time: '6 hours ago' },
+  ];
 
   return (
-    <div className="p-6 bg-gray-100 min-h-screen">
-      <h1 className="text-3xl font-bold mb-6 text-gray-800">Dashboard</h1>
-
-      {/* Stats Section */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
-        <StatCard icon={<FiMessageSquare />} title="Total Messages" value={stats.total_messages} />
-        <StatCard icon={<FiUsers />} title="Chats Started" value={stats.num_chats} />
-        <StatCard icon={<FiStar />} title="Pinned Messages" value={stats.pinned_messages} />
+    <div className="p-8 space-y-6">
+      <div className="flex justify-between items-center">
+        <h1 className="text-2xl font-semibold text-foreground">Dashboard</h1>
+        <button className="btn-primary px-4 py-2 rounded-md">
+          New Chat
+        </button>
       </div>
 
-      {/* Recent Activity Section */}
-      <div className="bg-white p-6 rounded-lg shadow">
-        <h2 className="text-xl font-semibold mb-4 text-gray-700 flex items-center">
-          <FiActivity className="mr-2" /> Recent Activity
-        </h2>
-        {recent_activities.length > 0 ? (
-          <ul className="space-y-3">
-            {recent_activities.map((activity, index) => (
-              <li key={index} className="text-sm text-gray-600 border-b pb-2 last:border-b-0">
-                <span className="font-medium text-gray-800">{getActivityDescription(activity)}</span>
-                <span className="text-xs text-gray-500 block">{formatTimestamp(activity.timestamp)}</span>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="text-sm text-gray-500">No recent activity found.</p>
-        )}
+      {/* Stats Grid */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        {statsGrid.map((stat, index) => (
+          <div key={index} className="bg-card text-card-foreground rounded-lg border shadow-sm p-6">
+            <div className="flex items-center justify-between">
+              <div className="text-primary/80">{stat.icon}</div>
+              <span className="text-sm text-green-500 flex items-center">
+                <FiTrendingUp className="mr-1" />
+                {stat.change}
+              </span>
+            </div>
+            <h3 className="text-2xl font-semibold mt-2">{stat.value}</h3>
+            <p className="text-muted-foreground text-sm">{stat.title}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* Recent Activity */}
+      <div className="bg-card text-card-foreground rounded-lg border shadow-sm p-6">
+        <h2 className="text-lg font-semibold mb-4">Recent Activity</h2>
+        <div className="space-y-4">
+          {recentActivity.map((activity, index) => (
+            <div key={index} className="flex items-center space-x-4 p-3 rounded-md hover:bg-accent/10 transition-colors">
+              {activity.type === 'chat' && <FiMessageSquare className="text-primary" size={20} />}
+              {activity.type === 'document' && <FiBook className="text-primary" size={20} />}
+              {activity.type === 'search' && <FiSearch className="text-primary" size={20} />}
+              <div className="flex-1">
+                <p className="text-sm font-medium">{activity.title}</p>
+                <p className="text-xs text-muted-foreground">{activity.time}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Quick Actions */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className="bg-card text-card-foreground rounded-lg border shadow-sm p-6">
+          <h2 className="text-lg font-semibold mb-4">Quick Actions</h2>
+          <div className="space-y-3">
+            <button className="w-full btn-secondary text-left px-4 py-3 rounded-md flex items-center space-x-2">
+              <FiMessageSquare />
+              <span>Start a new chat</span>
+            </button>
+            <button className="w-full btn-secondary text-left px-4 py-3 rounded-md flex items-center space-x-2">
+              <FiBook />
+              <span>Upload a document</span>
+            </button>
+            <button className="w-full btn-secondary text-left px-4 py-3 rounded-md flex items-center space-x-2">
+              <FiSearch />
+              <span>Search knowledge base</span>
+            </button>
+          </div>
+        </div>
+
+        <div className="bg-card text-card-foreground rounded-lg border shadow-sm p-6">
+          <h2 className="text-lg font-semibold mb-4">System Status</h2>
+          <div className="space-y-4">
+            <div className="flex justify-between items-center">
+              <span className="text-muted-foreground">API Status</span>
+              <span className="text-green-500">Operational</span>
+            </div>
+            <div className="flex justify-between items-center">
+              <span className="text-muted-foreground">Response Time</span>
+              <span className="text-foreground">234ms</span>
+            </div>
+            <div className="flex justify-between items-center">
+              <span className="text-muted-foreground">Model Version</span>
+              <span className="text-foreground">v2.1.0</span>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );
 };
 
-// Simple Stat Card component
+// Quick Action component
+const QuickAction = ({ icon, title, description, link }) => (
+  <a 
+    href={link}
+    className="bg-white p-4 rounded-lg shadow hover:shadow-md transition-shadow flex flex-col items-center text-center no-underline"
+  >
+    <div className="p-3 rounded-full bg-[#407986]/10 text-[#407986] mb-3">
+      {React.cloneElement(icon, { size: 20 })}
+    </div>
+    <h3 className="font-medium text-gray-800">{title}</h3>
+    <p className="text-sm text-gray-500 mt-1">{description}</p>
+  </a>
+);
+
+// Stat Card component
 const StatCard = ({ icon, title, value }) => (
   <div className="bg-white p-4 rounded-lg shadow flex items-center">
-    <div className="p-3 rounded-full bg-blue-100 text-blue-600 mr-4">
+    <div className="p-3 rounded-full bg-[#407986]/10 text-[#407986] mr-4">
       {React.cloneElement(icon, { size: 20 })}
     </div>
     <div>

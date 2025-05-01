@@ -13,6 +13,6 @@ COPY config.py /app/config.py
 
 RUN pip install --no-cache-dir -r requirements.txt
 
-EXPOSE 8000
+EXPOSE 5000
 
-CMD ["uvicorn", "backend.api:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+CMD ["flask", "--app", "api/index.py", "run"]

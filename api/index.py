@@ -73,10 +73,13 @@ class ChatManager:
         # Store chat sessions
         self.chat_sessions = {}
 
-        # Initialize DB connection (reuse ScholarAgent's logic if possible, or add here)
-        # For simplicity, adding connection logic here for now
+        # Initialize DB connection
         self.db_conn = None
-        self._ensure_db_connection()
+        try:
+            self._ensure_db_connection()
+        except Exception as e:
+            self.logger.warning(f"Failed to connect to database, continuing without database support: {str(e)}")
+            self.db_conn = None
 
         # Initialize OpenAI client once
         try:
@@ -90,38 +93,23 @@ class ChatManager:
              self.logger.error(f"Failed to initialize OpenAI client: {e}", exc_info=True)
              self.openai_client = None
 
-    # Add DB connection methods (similar to ScholarAgent)
-    def _connect_to_db(self, max_retries: int = 3, initial_delay: float = 1.0) -> None:
-        """Connect to PostgreSQL with retry logic and exponential backoff."""
-        delay = initial_delay
-        for attempt in range(max_retries):
-            try:
-                # TODO: Get DB credentials from config/env vars
-                self.db_conn = psycopg2.connect(
-                    host="localhost",
-                    database="paper_repository",
-                    user="postgres",
-                    password="ktsg1899"
-                )
-                self.logger.info("ChatManager successfully connected to database")
-                return
-            except psycopg2.OperationalError as e:
-                if attempt == max_retries - 1:
-                    self.logger.error(f"ChatManager failed to connect to database after {max_retries} attempts")
-                    raise
-                self.logger.warning(f"ChatManager DB connection attempt {attempt + 1} failed: {str(e)}")
-                self.logger.info(f"Retrying in {delay} seconds...")
-                time.sleep(delay)
-                delay *= 2
-
     def _ensure_db_connection(self) -> None:
-        """Ensure ChatManager has an active database connection."""
-        try:
-            if self.db_conn is None or self.db_conn.closed:
-                self._connect_to_db()
-        except Exception as e:
-             self.logger.error(f"ChatManager failed to ensure DB connection: {e}", exc_info=True)
-             # Handle error appropriately - maybe raise or set a flag
+        """Ensure database connection is established."""
+        if not self.db_conn or self.db_conn.closed:
+            try:
+                self.db_conn = psycopg2.connect(
+                    host=os.getenv('DB_HOST', 'localhost'),
+                    port=os.getenv('DB_PORT', '5432'),
+                    dbname=os.getenv('DB_NAME', 'thesys_ai'),
+                    user=os.getenv('DB_USER', 'postgres'),
+                    password=os.getenv('DB_PASSWORD')
+                )
+                self.db_conn.set_isolation_level(psycopg2.extensions.ISOLATION_LEVEL_AUTOCOMMIT)
+                self.logger.info("Successfully connected to database")
+            except Exception as e:
+                self.logger.warning(f"Failed to connect to database: {str(e)}")
+                self.db_conn = None
+                raise  # Re-raise the exception to be handled by the caller
 
     async def process_message(self, message: str, user_id: str, temperature: float, previous_context_vector: Optional[List[float]] = None) -> Dict[str, Any]:
         """Process a message using vector context, including temperature setting."""
@@ -203,7 +191,6 @@ class ChatManager:
             # --- NEW: Fetch summaries of recently uploaded files --- 
             uploaded_files_summaries = []
             try:
-                self._ensure_db_connection()
                 with self.db_conn.cursor() as cur:
                     # Fetch summary for the 3 most recent non-null summaries for this user
                     sql = """
@@ -322,11 +309,14 @@ class ChatManager:
             self.logger.error(f"Error generating citation: {str(e)}")
             return "Citation unavailable"
 
-    # Add __del__ method to close DB connection
     def __del__(self):
-        if self.db_conn:
-             self.db_conn.close()
-             self.logger.info("ChatManager database connection closed")
+        """Clean up database connection when the object is destroyed."""
+        if hasattr(self, 'db_conn') and self.db_conn and not self.db_conn.closed:
+            try:
+                self.db_conn.close()
+                self.logger.info("ChatManager database connection closed")
+            except Exception as e:
+                self.logger.warning(f"Error closing database connection: {str(e)}")
 
 # Create global chat manager instance
 chat_manager = ChatManager()
@@ -675,7 +665,7 @@ async def add_library_from_search():
         # Call the ScholarAgent method to handle fetching, uploading, and DB saving
         result = await chat_manager.scholar_agent.add_paper_from_url(
             user_id=user_id,
-            paper_details=paper_details
+            url=paper_details.get('url')  # Pass the URL directly instead of paper_details
         )
 
         # Return the result from the agent method

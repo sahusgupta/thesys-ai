@@ -2,6 +2,111 @@
 @tailwind components;
 @tailwind utilities;
 
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 222.2 84% 4.9%;
+    --card: 0 0% 100%;
+    --card-foreground: 222.2 84% 4.9%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222.2 84% 4.9%;
+    --primary: 196 64% 38%;
+    --primary-foreground: 210 40% 98%;
+    --secondary: 210 40% 96.1%;
+    --secondary-foreground: 222.2 47.4% 11.2%;
+    --muted: 210 40% 96.1%;
+    --muted-foreground: 215.4 16.3% 46.9%;
+    --accent: 210 40% 96.1%;
+    --accent-foreground: 222.2 47.4% 11.2%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 214.3 31.8% 91.4%;
+    --input: 214.3 31.8% 91.4%;
+    --ring: 196 64% 38%;
+  }
+
+  .dark {
+    --background: 222.2 84% 4.9%;
+    --foreground: 210 40% 98%;
+    --card: 222.2 84% 4.9%;
+    --card-foreground: 210 40% 98%;
+    --popover: 222.2 84% 4.9%;
+    --popover-foreground: 210 40% 98%;
+    --primary: 196 64% 38%;
+    --primary-foreground: 210 40% 98%;
+    --secondary: 217.2 32.6% 17.5%;
+    --secondary-foreground: 210 40% 98%;
+    --muted: 217.2 32.6% 17.5%;
+    --muted-foreground: 215 20.2% 65.1%;
+    --accent: 217.2 32.6% 17.5%;
+    --accent-foreground: 210 40% 98%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 217.2 32.6% 17.5%;
+    --input: 217.2 32.6% 17.5%;
+    --ring: 196 64% 38%;
+  }
+
+  * {
+    @apply border-border;
+  }
+  
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+
+  .dark body {
+    @apply bg-background text-foreground;
+  }
+
+  /* Container styles */
+  .container {
+    @apply mx-auto px-4;
+  }
+
+  /* Card styles */
+  .card {
+    @apply bg-card text-card-foreground shadow-sm rounded-lg border p-6;
+  }
+
+  /* Form elements */
+  input, textarea, select {
+    @apply bg-background border-input text-foreground rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 focus:ring-offset-background;
+  }
+
+  .dark input, .dark textarea, .dark select {
+    @apply bg-secondary border-input;
+  }
+
+  /* Button styles */
+  button {
+    @apply inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2;
+  }
+
+  .btn-primary {
+    @apply bg-primary text-primary-foreground hover:bg-primary/90;
+  }
+
+  .btn-secondary {
+    @apply bg-secondary text-secondary-foreground hover:bg-secondary/80;
+  }
+
+  .btn-destructive {
+    @apply bg-destructive text-destructive-foreground hover:bg-destructive/90;
+  }
+
+  /* Text styles */
+  .text-muted {
+    @apply text-muted-foreground;
+  }
+
+  /* Hover effects */
+  .hover-card {
+    @apply hover:bg-accent hover:text-accent-foreground;
+  }
+}
+
 html, body, #root {
   height: 100%;
   margin: 0;
@@ -10,8 +115,6 @@ html, body, #root {
 
 body {
   font-family: 'Arial', sans-serif;
-  background-color: #ffffff;
-  color: #000000;
 }
 
 @keyframes fadeInDown {
@@ -32,7 +135,7 @@ body {
   animation: fadeIn 2s ease-in-out;
 }
 
-/* Custom switch toggle */
+/* Custom switch toggle with new color scheme */
 .switch {
   position: relative;
   display: inline-block;
@@ -53,7 +156,7 @@ body {
   left: 0;
   right: 0;
   bottom: 0;
-  background-color: #ccc;
+  @apply bg-secondary;
   transition: .4s;
 }
 
@@ -64,12 +167,12 @@ body {
   width: 20px;
   left: 3px;
   bottom: 3px;
-  background-color: white;
+  @apply bg-background;
   transition: .4s;
 }
 
 input:checked + .slider {
-  background-color: #000000;
+  @apply bg-primary;
 }
 
 input:checked + .slider:before {

@@ -2,9 +2,12 @@
 import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
-import { FiSend, FiUpload, FiPlus, FiEdit, FiTrash2, FiSearch, FiStar, FiDownload } from 'react-icons/fi';
+import { FiSend, FiUpload, FiPlus, FiEdit, FiTrash2, FiSearch, FiStar, FiDownload, FiRefreshCw, FiMessageSquare, FiChevronLeft, FiChevronRight } from 'react-icons/fi';
 import { AiOutlineLoading3Quarters } from 'react-icons/ai';
 import MessageBubble from '../components/MessageBubble'; // Import the separate component
+import { addActivity, ACTIVITY_TYPES } from '../utils/activityTracker';
+import { useSubscription } from '../context/SubscriptionContext';
+import { useNavigate } from 'react-router-dom';
 
 
 const formatResponse = (text) => {
@@ -28,6 +31,7 @@ export default function Chat() {
    *   lastResponseVector: (array or null),
    * }
    */
+  const [isCollapsed, setIsCollapsed] = useState(false);
   const [chats, setChats] = useState(() => {
     // Load from localStorage if available
     try {
@@ -69,6 +73,9 @@ export default function Chat() {
 
   // Additional features:
   const [searchQuery, setSearchQuery] = useState('');
+
+  const { canSendMessage, incrementMessageCount, hasFeature, getRemainingMessages, currentPlan, PLAN_TYPES } = useSubscription();
+  const navigate = useNavigate();
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -119,46 +126,34 @@ export default function Chat() {
 
   /* ---------------- API Interactions ---------------- */
   const handleSend = async () => {
-    if (!inputText.trim() || isGenerating) return; // Prevent sending empty or while generating
+    if (!inputText.trim() || isGenerating) return;
+    
+    // Check if user can send message
+    if (!canSendMessage()) {
+      addMessageToActiveChat('System', `You've reached your daily message limit for the ${currentPlan} plan. Upgrade to send more messages.`);
+      return;
+    }
+
     const limitedMessage = inputText.trim().slice(0, 500);
 
+    // Add user message
     addMessageToActiveChat('User', limitedMessage);
     setInputText('');
 
-    // --- Read temperature from localStorage --- 
-    let temperature = 0.7; // Default value
-    try {
-      const savedTemp = localStorage.getItem('ai_temperature');
-      if (savedTemp !== null) {
-        temperature = parseFloat(savedTemp);
-        // Basic validation (optional but recommended)
-        if (isNaN(temperature) || temperature < 0 || temperature > 1) {
-          console.warn('Invalid temperature in localStorage, using default.');
-          temperature = 0.7;
-        }
-      }
-    } catch (err) {
-      console.error("Error reading temperature from localStorage:", err);
-      // Use default if error reading
-      temperature = 0.7;
-    }
-    // --- End Read temperature ---
-
     try {
       setIsGenerating(true);
+      incrementMessageCount(); // Increment message count only after successful send
 
       const activeChat = getActiveChat();
       const payload = {
         message: limitedMessage,
         user_id: currentUser?.uid || 'anonymous',
         previous_context_vector: activeChat?.lastResponseVector || null,
-        temperature: temperature // Include temperature in payload
+        temperature: 0.7
       };
 
       const source = axios.CancelToken.source();
       cancelToken.current = source;
-
-      console.log("Sending payload:", payload); // Debug: Log the payload being sent
 
       const response = await axios.post('http://127.0.0.1:5000/api/chat', payload, {
         cancelToken: source.token,
@@ -176,31 +171,29 @@ export default function Chat() {
         addMessageToActiveChat('Thesys', `Error: ${error}`);
       } else {
         const responseText = text || '';
-        // Store the full response including raw_data for the assistant message
         const assistantMessage = {
           id: Date.now(),
           sender: 'Assistant',
-          text: '', // Will be populated by typeMessage
+          text: '',
           timestamp: new Date().toISOString(),
-          raw_data: data.raw_data || null, // Store raw_data
-          isTyping: true, // Add flag for typing effect
+          raw_data: data.raw_data || null,
+          isTyping: true,
         };
 
-        // Fix: Update the chat messages correctly
         const activeChat = getActiveChat();
         if (activeChat) {
           updateChat(activeChatId, {
             messages: [...activeChat.messages, assistantMessage]
           });
           
-          await typeMessage(responseText, assistantMessage.id); // Pass ID to update the correct message
+          await typeMessage(responseText, assistantMessage.id);
         }
       }
     } catch (err) {
       if (axios.isCancel(err)) {
         addMessageToActiveChat('Thesys', 'Response generation cancelled.');
       } else {
-        console.error("API call error:", err); // Log the full error
+        console.error("API call error:", err);
         addMessageToActiveChat('Thesys', `Error: ${err.message}`);
       }
       updateChat(activeChatId, { lastResponseVector: null });
@@ -227,16 +220,29 @@ export default function Chat() {
     // Find the message to update
     const activeChat = getActiveChat();
     if (!activeChat) {
+      console.warn("No active chat found for typing message");
       setIsGenerating(false);
       return;
     }
     
+    // Find the message index
     const messageIndex = activeChat.messages.findIndex(msg => msg.id === messageId);
-
     if (messageIndex === -1) {
-      console.error("Could not find message to type into:", messageId);
+      console.warn("Could not find message to type into:", messageId);
+      // Instead of returning, create a new message
+      const newMessage = {
+        id: messageId,
+        sender: 'Assistant',
+        text: messageToType,
+        timestamp: new Date().toISOString(),
+        isTyping: false
+      };
+      
+      updateChat(activeChatId, {
+        messages: [...activeChat.messages, newMessage]
+      });
       setIsGenerating(false);
-      return; // Exit if message not found
+      return;
     }
 
     let typedText = '';
@@ -279,8 +285,21 @@ export default function Chat() {
   };
 
   const handleFileUpload = async (e) => {
+    if (!hasFeature('document-upload')) {
+      addMessageToActiveChat('System', 'Document upload is a premium feature. Please upgrade your plan to use this feature.');
+      return;
+    }
+
     const file = e.target.files[0];
     if (!file) return;
+
+    // Track file upload immediately
+    console.log('File selected for upload:', file.name);
+    addActivity(ACTIVITY_TYPES.FILE_DOWNLOADED, {
+      fileName: file.name,
+      fileType: file.type,
+      size: file.size
+    });
 
     try {
       const formData = new FormData();
@@ -291,11 +310,11 @@ export default function Chat() {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
 
-      const { data } = uploadRes;
-      const statusMsg = data.error
-        ? `Upload failed: ${data.error}`
-        : `Successfully uploaded ${file.name}`;
-      addMessageToActiveChat('Thesys', statusMsg);
+      if (uploadRes.data.error) {
+        addMessageToActiveChat('Thesys', `Upload failed: ${uploadRes.data.error}`);
+      } else {
+        addMessageToActiveChat('Thesys', `Successfully uploaded ${file.name}`);
+      }
     } catch (err) {
       addMessageToActiveChat('Thesys', `Error uploading file: ${err.message}`);
     }
@@ -304,16 +323,23 @@ export default function Chat() {
   /* ---------------- Multi-Chat Functions ---------------- */
   const createNewChat = () => {
     const newId = `chat-${Date.now()}`;
-    setChats((prev) => [
-      ...prev,
-      {
-        id: newId,
-        title: `Chat ${prev.length + 1}`,
-        messages: [],
-        lastResponseVector: null
-      }
-    ]);
+    const newTitle = `Chat ${chats.length + 1}`;
+    
+    setChats(prev => [...prev, {
+      id: newId,
+      title: newTitle,
+      messages: [],
+      lastResponseVector: null
+    }]);
+    
     setActiveChatId(newId);
+    
+    // Track chat creation
+    console.log('Creating new chat:', newTitle);
+    addActivity(ACTIVITY_TYPES.CHAT_STARTED, {
+      chatId: newId,
+      title: newTitle
+    });
   };
 
   const renameChat = (chatId, newTitle) => {
@@ -381,56 +407,83 @@ export default function Chat() {
     URL.revokeObjectURL(url);
   };
 
+  // Add handler for paper likes
+  const handlePaperLike = (paperId, paperTitle) => {
+    console.log('Paper liked:', paperId, paperTitle);
+    addActivity(ACTIVITY_TYPES.ARTICLE_LIKED, {
+      paperId,
+      title: paperTitle
+    });
+  };
+
   /* ---------------- Rendering ---------------- */
   return (
-    <div className="flex flex-row h-screen bg-gray-100">
+    <div className="flex h-screen bg-background">
       {/* Sidebar for multiple chats */}
-      <div className="w-64 flex flex-col border-r bg-white">
-        <div className="p-4 flex items-center justify-between border-b">
-          <h2 className="text-xl font-bold text-gray-800">Chats</h2>
-          <button
-            onClick={createNewChat}
-            className="bg-[#4B8795] text-white p-2 rounded-md hover:bg-[#407986] transition"
-            title="Start new chat"
-          >
-            <FiPlus />
-          </button>
+      <div className={`${isCollapsed ? 'w-20' : 'w-64'} flex flex-col border-r border-border bg-card transition-all duration-300`}>
+        <div className="p-4 flex items-center justify-between border-b border-border">
+          {!isCollapsed && <h2 className="text-lg font-semibold text-foreground">Chats</h2>}
+          <div className="flex items-center gap-2 ml-auto">
+            <button
+              onClick={() => setIsCollapsed(!isCollapsed)}
+              className="btn-secondary p-2 rounded-md"
+              title={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+            >
+              {isCollapsed ? <FiChevronRight size={16} /> : <FiChevronLeft size={16} />}
+            </button>
+            <button
+              onClick={createNewChat}
+              className="btn-primary p-2 rounded-md"
+              title="Start new chat"
+            >
+              <FiPlus />
+            </button>
+          </div>
         </div>
         <div className="flex-1 overflow-y-auto">
           {chats.map((chat) => (
             <div
               key={chat.id}
               onClick={() => setActiveChatId(chat.id)}
-              className={`flex items-center justify-between px-4 py-3 cursor-pointer border-b ${
-                chat.id === activeChatId ? 'bg-[#F0F4F6]' : 'hover:bg-gray-50'
-              }`}
+              className={`flex items-center justify-between px-4 py-3 cursor-pointer border-b border-border/50 transition-colors
+                ${chat.id === activeChatId 
+                  ? 'btn-primary' 
+                  : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+                }`}
             >
-              <span className="font-medium text-sm mr-2 truncate">
-                {chat.title}
-              </span>
               <div className="flex items-center gap-2">
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    const newTitle = prompt('Enter new chat title:', chat.title);
-                    if (newTitle) renameChat(chat.id, newTitle);
-                  }}
-                  className="text-gray-500 hover:text-gray-700"
-                  title="Rename chat"
-                >
-                  <FiEdit />
-                </button>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    deleteChat(chat.id);
-                  }}
-                  className="text-gray-500 hover:text-red-500"
-                  title="Delete chat"
-                >
-                  <FiTrash2 />
-                </button>
+                <FiMessageSquare size={16} />
+                {!isCollapsed && (
+                  <span className="font-medium text-sm truncate">
+                    {chat.title}
+                  </span>
+                )}
               </div>
+              {!isCollapsed && (
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const newTitle = prompt('Enter new chat title:', chat.title);
+                      if (newTitle) renameChat(chat.id, newTitle);
+                    }}
+                    className="opacity-60 hover:opacity-100"
+                    title="Rename chat"
+                  >
+                    <FiEdit size={16} />
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      deleteChat(chat.id);
+                    }}
+                    className="opacity-60 hover:opacity-100"
+                    title="Delete chat"
+                  >
+                    <FiTrash2 size={16} />
+                  </button>
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -438,54 +491,85 @@ export default function Chat() {
 
       {/* Main chat area */}
       <div className="flex-1 flex flex-col">
-        {/* Header */}
-        <div className="bg-gradient-to-r from-[#4B8795] to-[#407986] p-4 text-white">
-          <div className="flex items-center justify-between w-full">
-            <div className="flex flex-col">
-              <h1 className="text-xl font-bold">Thesys Chat</h1>
-              <p className="text-sm opacity-90">Multi-Session Research Assistant</p>
+        {/* Chat Header */}
+        <div className="border-b border-border bg-card p-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="text-xl font-semibold text-foreground">
+                {getActiveChat()?.title || 'New Chat'}
+              </h1>
+              <p className="text-sm text-muted-foreground">
+                AI Research Assistant
+                {currentPlan !== PLAN_TYPES.PRO && (
+                  <span className="ml-2 text-primary">
+                    ({getRemainingMessages()} messages remaining today)
+                  </span>
+                )}
+              </p>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center space-x-2">
               {/* File upload */}
-              <label className="inline-flex items-center px-3 py-2 bg-[#F0F4F6] rounded text-sm text-gray-700 hover:bg-gray-200 transition cursor-pointer">
-                <input
-                  type="file"
-                  className="hidden"
-                  accept=".pdf,.txt"
-                  onChange={handleFileUpload}
-                  disabled={isGenerating}
-                />
-                <FiUpload className="mr-1" />
-                Upload
-              </label>
-              {/* Download chat */}
-              <button
-                onClick={downloadChatAsText}
-                className="bg-[#F0F4F6] text-gray-700 p-2 rounded hover:bg-gray-200 transition"
-                title="Download this chat"
-              >
-                <FiDownload />
-              </button>
+              {hasFeature('document-upload') ? (
+                <label className="btn-secondary px-3 py-2 rounded-md cursor-pointer inline-flex items-center">
+                  <input
+                    type="file"
+                    className="hidden"
+                    accept=".pdf,.txt"
+                    onChange={handleFileUpload}
+                    disabled={isGenerating}
+                  />
+                  <FiUpload className="mr-2" />
+                  Upload
+                </label>
+              ) : (
+                <button
+                  onClick={() => addMessageToActiveChat('System', 'Document upload is a premium feature. Please upgrade your plan to use this feature.')}
+                  className="btn-secondary px-3 py-2 rounded-md opacity-50 cursor-not-allowed"
+                  title="Premium feature"
+                >
+                  <FiUpload className="mr-2" />
+                  Upload
+                </button>
+              )}
+              
+              {/* Download chat - premium feature */}
+              {hasFeature('citation-export') ? (
+                <button
+                  onClick={downloadChatAsText}
+                  className="btn-secondary p-2 rounded-md"
+                  title="Download this chat"
+                >
+                  <FiDownload />
+                </button>
+              ) : (
+                <button
+                  onClick={() => addMessageToActiveChat('System', 'Chat export is a premium feature. Please upgrade your plan to use this feature.')}
+                  className="btn-secondary p-2 rounded-md opacity-50 cursor-not-allowed"
+                  title="Premium feature"
+                >
+                  <FiDownload />
+                </button>
+              )}
             </div>
           </div>
         </div>
 
         {/* Search & pinned messages */}
-        <div className="p-3 bg-white flex items-center border-b gap-3">
+        <div className="border-b border-border bg-card/50 p-3 flex items-center gap-3">
           <div className="relative flex-1">
-            <FiSearch className="absolute top-2 left-2 text-gray-500" />
+            <FiSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
             <input
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-8 pr-3 py-2 w-full rounded border focus:outline-none focus:ring-2 focus:ring-[#4B8795]"
+              className="pl-10 w-full bg-background border border-input rounded-md px-4 py-2 focus:outline-none focus:ring-2 focus:ring-ring"
               placeholder="Search messages..."
             />
           </div>
           {pinnedMessages().length > 0 && (
-            <div className="flex items-center">
-              <FiStar className="text-yellow-500 mr-1" />
-              <span className="text-sm text-gray-600">
+            <div className="flex items-center text-muted-foreground">
+              <FiStar className="text-primary mr-1" />
+              <span className="text-sm">
                 {pinnedMessages().length} pinned
               </span>
             </div>
@@ -493,58 +577,130 @@ export default function Chat() {
         </div>
 
         {/* Messages */}
-        <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-2 bg-white">
-          {filterMessages().map((msg) => (
-            <MessageBubble
-              key={msg.id}
-              message={msg}
-              onPinToggle={handlePinToggle}
-            />
+        <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-4">
+          {filterMessages().map((message) => (
+            <div
+              key={message.id}
+              className={`flex ${message.sender === 'Assistant' ? 'justify-start' : 'justify-end'}`}
+            >
+              <div
+                className={`group relative max-w-[80%] rounded-lg px-4 py-2 ${
+                  message.sender === 'Assistant'
+                    ? 'bg-card text-card-foreground border border-border'
+                    : 'bg-primary text-primary-foreground'
+                }`}
+              >
+                <p className="text-sm whitespace-pre-wrap">{message.text}</p>
+                {/* Message actions */}
+                <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <button
+                    onClick={() => handlePinToggle(message.id)}
+                    className={`p-1 rounded-md transition-colors ${
+                      message.pinned 
+                        ? 'text-primary bg-primary/10' 
+                        : 'hover:bg-accent hover:text-accent-foreground'
+                    }`}
+                  >
+                    <FiStar size={14} />
+                  </button>
+                </div>
+              </div>
+            </div>
           ))}
-          {/* Display typing indicator if the last message is from assistant and typing */}
-          {getActiveChat()?.messages.length > 0 && 
-           getActiveChat().messages[getActiveChat().messages.length - 1]?.sender === 'Assistant' && 
-           getActiveChat().messages[getActiveChat().messages.length - 1]?.isTyping && (
-             <div className="flex justify-start items-start my-2">
-               <div className="mr-3 flex-shrink-0 bg-gray-300 text-white h-8 w-8 rounded-full flex items-center justify-center">T</div>
-               <div className="max-w-[70%] p-3 rounded-xl shadow-sm bg-[#F0F4F6] text-gray-800">
-                 <span className="italic text-gray-500">Typing...</span>
-               </div>
-             </div>
-           )}
+          {isGenerating && (
+            <div className="flex justify-start">
+              <div className="bg-card text-card-foreground border border-border rounded-lg px-4 py-2">
+                <div className="flex items-center space-x-2">
+                  <FiRefreshCw className="animate-spin" />
+                  <span className="text-sm">Thinking...</span>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
-        {/* Input area */}
-        <div className="border-t p-3 bg-[#F0F4F6] flex items-center relative">
-          <textarea
-            ref={inputRef}
-            rows={1}
-            value={inputText}
-            onChange={(e) => setInputText(e.target.value)}
-            onKeyDown={handleKeyDown}
-            className="flex-grow p-2 rounded-lg border bg-white text-sm resize-none focus:outline-none focus:ring-2 focus:ring-[#4B8795]"
-            placeholder="Type your message..."
-            disabled={!activeChatId}
-          />
-          <button
-            onClick={isGenerating ? () => cancelToken?.current?.cancel() : handleSend}
-            disabled={!inputText.trim() && !isGenerating}
-            className={`ml-2 py-2 px-3 rounded-lg transition ${
-              isGenerating
-                ? 'bg-red-500 hover:bg-red-600 text-white'
-                : 'bg-[#4B8795] hover:bg-[#407986] text-white'
-            } disabled:opacity-50`}
-          >
-            {isGenerating ? (
-              <span className="flex items-center gap-1">
-                <AiOutlineLoading3Quarters className="animate-spin" />
-                Stop
-              </span>
-            ) : (
-              <FiSend />
-            )}
-          </button>
-        </div>
+        {/* Add upgrade prompt for free users */}
+        {currentPlan === PLAN_TYPES.FREE && (
+          <div className="border-t border-border bg-primary/10 p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-primary">
+                  Upgrade to unlock premium features:
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Unlimited messages, document upload, chat export, and more!
+                </p>
+              </div>
+              <button
+                onClick={() => navigate('/settings')}
+                className="btn-primary px-4 py-2 text-sm"
+              >
+                Upgrade Now
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Input Form */}
+        <form onSubmit={(e) => {
+          e.preventDefault();
+          handleSend();
+        }} className="border-t border-border bg-card p-4">
+          <div className="flex space-x-4">
+            <input
+              type="text"
+              value={inputText}
+              onChange={(e) => setInputText(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder={canSendMessage() 
+                ? "Type your message..." 
+                : `Daily message limit reached. Upgrade to send more messages.`
+              }
+              className={`flex-1 bg-background border border-input rounded-md px-4 py-2 focus:outline-none focus:ring-2 focus:ring-ring ${
+                !canSendMessage() ? 'opacity-50 cursor-not-allowed' : ''
+              }`}
+              disabled={!activeChatId || !canSendMessage() || isGenerating}
+            />
+            <button
+              type="submit"
+              disabled={!inputText.trim() || isGenerating || !activeChatId || !canSendMessage()}
+              className={`px-4 py-2 rounded-md transition-colors ${
+                !canSendMessage()
+                  ? 'btn-secondary opacity-50 cursor-not-allowed'
+                  : isGenerating
+                  ? 'btn-destructive'
+                  : 'btn-primary'
+              }`}
+              onClick={isGenerating ? () => cancelToken?.current?.cancel() : undefined}
+              title={!canSendMessage() ? "Daily message limit reached" : undefined}
+            >
+              {isGenerating ? (
+                <span className="flex items-center gap-2">
+                  <AiOutlineLoading3Quarters className="animate-spin" />
+                  Stop
+                </span>
+              ) : (
+                <FiSend />
+              )}
+            </button>
+          </div>
+          {!canSendMessage() && (
+            <div className="mt-4 p-4 bg-destructive/10 rounded-md">
+              <p className="text-sm text-destructive font-medium">
+                You've reached your daily message limit.
+              </p>
+              <p className="text-xs text-muted-foreground mt-1">
+                Upgrade your plan to send more messages or wait until tomorrow.
+              </p>
+              <button
+                onClick={() => navigate('/settings#subscription-plans')}
+                className="btn-primary mt-3 px-4 py-2 text-sm"
+              >
+                Upgrade Now
+              </button>
+            </div>
+          )}
+        </form>
       </div>
     </div>
   );

@@ -31,6 +31,12 @@ class ScholarAgent:
         }
         
         self.context_agent = context_agent
+        self.db_conn = None
+        try:
+            self._ensure_db_connection()
+        except Exception as e:
+            self.logger.warning(f"Failed to connect to database, continuing without database support: {str(e)}")
+            self.db_conn = None
 
         # Create papers directory if it doesn't exist
         self.papers_dir = Path("data/papers")
@@ -643,8 +649,12 @@ class ScholarAgent:
 
     def __del__(self):
         """Clean up database connection when the object is destroyed."""
-        if self.db_conn and not self.db_conn.closed:
-            self.db_conn.close()
+        if hasattr(self, 'db_conn') and self.db_conn and not self.db_conn.closed:
+            try:
+                self.db_conn.close()
+                self.logger.info("Database connection closed")
+            except Exception as e:
+                self.logger.warning(f"Error closing database connection: {str(e)}")
 
     # --- Method to check library status for multiple papers ---
     def check_library_status(self, user_id: str, paper_urls: List[str]) -> Dict[str, Dict]:
@@ -729,3 +739,21 @@ class ScholarAgent:
         except Exception as e:
             self.logger.error(f"Error liking paper: {str(e)}")
             return {'status': 'error', 'message': str(e)}
+
+    def _ensure_db_connection(self) -> None:
+        """Ensure database connection is established."""
+        if not self.db_conn or self.db_conn.closed:
+            try:
+                self.db_conn = psycopg2.connect(
+                    host=os.getenv('DB_HOST', 'localhost'),
+                    port=os.getenv('DB_PORT', '5432'),
+                    dbname=os.getenv('DB_NAME', 'thesys_ai'),
+                    user=os.getenv('DB_USER', 'postgres'),
+                    password=os.getenv('DB_PASSWORD')
+                )
+                self.db_conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
+                self.logger.info("Successfully connected to database")
+            except Exception as e:
+                self.logger.warning(f"Failed to connect to database: {str(e)}")
+                self.db_conn = None
+                raise  # Re-raise the exception to be handled by the caller
