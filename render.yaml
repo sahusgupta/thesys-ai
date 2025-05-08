@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: thesys-ai-api
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn api.index:app
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.9.0
+      - key: PORT
+        value: 8000 
